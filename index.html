@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoLock IAM - Inbox</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <!-- Landing / Bienvenida -->
+  <section class="landing" id="landing">
+    <header class="landing-top">
+      <div class="landing-badge">
+        <span class="dot"></span>
+        <span>CRYPTOLOCK: Gestor de identidad y acceso (IAM)</span>
+      </div>
+    </header>
+
+    <div class="landing-grid">
+      <div class="landing-left">
+        <h1>Identidad segura, trazable y sin contraseñas</h1>
+
+        <p class="landing-text">
+          CryptoLock es un sistema IAM que permite autenticación <b>passwordless</b>,
+          gestión protegida de llaves criptográficas y el registro <b>inmutable</b> de accesos
+          para garantizar integridad, trazabilidad y confiabilidad mediante blockchain.
+        </p>
+
+        <div class="landing-actions">
+          <button class="btn-primary" id="btnEnter">Entrar al Dashboard</button>
+          <button class="btn-outline" id="btnAbout">Ver objetivos</button>
+        </div>
+
+        <div class="landing-mini" id="aboutBox">
+          <h3>Objetivo del proyecto</h3>
+          <ul>
+            <li>Autenticación segura sin contraseñas (firma/OTP/biometría simulada).</li>
+            <li>Bóveda de llaves: la clave privada nunca se expone.</li>
+            <li>Auditoría de accesos con trazabilidad e integridad tipo blockchain.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="landing-right">
+        <img class="landing-FIEE" src="assets/FIEE.png" alt="Imagen CryptoLock" />
+      </div>
+    </div>
+  </section>
+
+    <div class="app hidden" id="dashboardApp">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">🔐</div>
+        <div>
+          <div class="brand-title">CryptoLock IAM</div>
+          <div class="brand-sub">IAM Sistema de Gestión de Identidad y Acceso</div>
+        </div>
+      </div>
+
+      <button class="compose" id="btnCompose">✍️ Nueva acción</button>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="inbox">📥 Bandeja (Eventos)</button>
+        <button class="nav-item" data-view="vault">🗝️ Bóveda de llaves</button>
+        <button class="nav-item" data-view="methods">✅ Métodos</button>
+        <button class="nav-item" data-view="ledger">⛓️ Blockchain</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-chip">👤 Usuario: <b>Pedro</b></div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <!-- Topbar -->
+      <header class="topbar">
+        <input id="search" class="search" type="text" placeholder="Buscar eventos..." />
+        <div class="top-actions">
+          <button class="ghost" id="btnRefresh">⟳</button>
+          <button class="ghost">⚙️</button>
+        </div>
+      </header>
+
+      <!-- Content -->
+      <section class="content">
+        <!-- Left list -->
+        <div class="list" id="list"></div>
+
+        <!-- Right detail -->
+        <div class="detail" id="detail">
+          <div class="detail-empty">
+            <div class="big">📩</div>
+            <h2>Selecciona un evento</h2>
+            <p>Haz click en un elemento de la lista para ver el detalle.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal: Nueva acción -->
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Nueva acción</h3>
+        <button class="ghost" id="btnCloseModal">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <label>Tipo de acción</label>
+        <select id="actionType">
+          <option>Solicitar acceso</option>
+          <option>Registrar dispositivo</option>
+          <option>Rotar llaves (simulado)</option>
+          <option>Generar reto (challenge)</option>
+        </select>
+
+        <label>Descripción</label>
+        <textarea id="actionDesc" rows="4" placeholder="Escribe una descripción..."></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn" id="btnSendAction">Crear</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
