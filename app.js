@@ -1,8 +1,18 @@
 // =========================
 // Referencias HTML
 // =========================
-const btnSignup = document.getElementById("btnSignup");
+// =========================
+// Referencias HTML
+// =========================
+const landing = document.getElementById("landing");
+const dashboardApp = document.getElementById("dashboardApp");
 
+const btnEnter = document.getElementById("btnEnter");
+const btnSignup = document.getElementById("btnSignup"); // SOLO UNA VEZ
+const btnAbout = document.getElementById("btnAbout");
+const aboutBox = document.getElementById("aboutBox");
+
+/* ===== Modal Crear Cuenta ===== */
 const signupBackdrop = document.getElementById("signupBackdrop");
 const btnCloseSignup = document.getElementById("btnCloseSignup");
 const btnCreateAccount = document.getElementById("btnCreateAccount");
@@ -14,14 +24,7 @@ const suPassword = document.getElementById("suPassword");
 const suPassword2 = document.getElementById("suPassword2");
 const suTerms = document.getElementById("suTerms");
 
-const landing = document.getElementById("landing");
-const dashboardApp = document.getElementById("dashboardApp");
-
-const btnEnter = document.getElementById("btnEnter");
-const btnSignup = document.getElementById("btnSignup");
-const btnAbout = document.getElementById("btnAbout");
-const aboutBox = document.getElementById("aboutBox");
-
+/* ===== Dashboard ===== */
 const listEl = document.getElementById("list");
 const detailEl = document.getElementById("detail");
 const searchEl = document.getElementById("search");
@@ -37,6 +40,7 @@ const actionTypeEl = document.getElementById("actionType");
 const actionDescEl = document.getElementById("actionDesc");
 
 const navItems = document.querySelectorAll(".nav-item");
+
 
 // ================
 // Estado
