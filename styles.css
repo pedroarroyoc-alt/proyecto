@@ -431,3 +431,39 @@ select, textarea {
   .topbar-cta{ font-size: 16px; padding: 10px 12px; }
 }
 
+/* ===== Encajonar header al mismo ancho del contenido ===== */
+.topbar-site{
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fff;
+  border-bottom: 1px solid rgba(0,0,0,.08);
+
+  /* clave: mismo ancho que landing-grid */
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 14px 0;           /* sin padding lateral */
+}
+
+.landing{
+  padding: 0 24px 24px;      /* el padding lateral queda en el landing */
+}
+
+/* Layout del header */
+.topbar-site{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topbar-left{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-right{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
