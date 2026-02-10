@@ -467,3 +467,4 @@ select, textarea {
   align-items: center;
   gap: 14px;
 }
+.hidden { display: none; }
