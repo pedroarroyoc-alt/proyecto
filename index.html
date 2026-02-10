@@ -3,17 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CryptoLock IAM - Inbox</title>
+  <title>CryptoLock</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 
 <body>
   <!-- Landing / Bienvenida -->
   <section class="landing" id="landing">
-    <header class="landing-top">
-      <div class="landing-badge">
-        <span class="dot"></span>
-        <span>CRYPTOLOCK: Gestor de identidad y acceso (IAM)</span>
+
+    <!-- TOP BAR (nuevo) -->
+    <header class="topbar-site">
+      <div class="topbar-left">
+        <!-- Logo FIEE -->
+        <img class="topbar-logo" src="assets/logo.png" alt="FIEE" />
+        <div class="topbar-brand">CryptoLock</div>
+      </div>
+
+      <div class="topbar-right">
+        <!-- Usuario existente -->
+        <button class="topbar-link" id="btnEnter">Acceder</button>
+
+        <!-- Usuario nuevo -->
+        <button class="topbar-cta" id="btnSignup">Crear una cuenta</button>
       </div>
     </header>
 
@@ -27,8 +38,8 @@
           para garantizar integridad, trazabilidad y confiabilidad mediante blockchain.
         </p>
 
+        <!-- Solo dejamos "Ver objetivos" (Acceder ahora está arriba) -->
         <div class="landing-actions">
-          <button class="btn-primary" id="btnEnter">Entrar al Dashboard</button>
           <button class="btn-outline" id="btnAbout">Ver objetivos</button>
         </div>
 

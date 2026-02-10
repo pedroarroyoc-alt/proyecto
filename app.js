@@ -5,6 +5,7 @@ const landing = document.getElementById("landing");
 const dashboardApp = document.getElementById("dashboardApp");
 
 const btnEnter = document.getElementById("btnEnter");
+const btnSignup = document.getElementById("btnSignup");
 const btnAbout = document.getElementById("btnAbout");
 const aboutBox = document.getElementById("aboutBox");
 
@@ -381,6 +382,14 @@ function handle_send_action() {
 // Listeners
 // =========================
 if (btnEnter) btnEnter.addEventListener("click", go_to_dashboard);
+
+if (btnSignup) {
+  btnSignup.addEventListener("click", () => {
+    toast("Crear cuenta (demo): aquí irá el registro ✅");
+    // Si quieres, puedes abrir tu modal actual para reutilizarlo:
+    // open_modal();
+  });
+}
 
 if (btnAbout) {
   btnAbout.addEventListener("click", () => {

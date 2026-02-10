@@ -300,7 +300,7 @@ select, textarea {
 .btn-outline:hover{ background: #fff5f8; }
 
 .landing-mini{
-  display: none;
+  display: block;
   border: 1px solid #f1d5dd;
   background: #fff5f8;
   border-radius: 14px;
@@ -336,3 +336,98 @@ select, textarea {
   .landing-grid{ grid-template-columns: 1fr; }
   .landing-left h1{ font-size: 44px; }
 }
+/* =========================
+   FIX: Modal (para que funcione con .hidden)
+   ========================= */
+.modal-backdrop{
+  display: grid; /* antes estaba display:none y nunca aparecía */
+}
+.modal-backdrop.hidden{
+  display: none;
+}
+
+/* =========================
+   Landing TOP BAR (nuevo modelo)
+   ========================= */
+.topbar-site{
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid rgba(0,0,0,.08);
+}
+
+.topbar-left{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-logo{
+  height: 40px;
+  width: auto;
+}
+
+.topbar-brand{
+  font-size: 30px;
+  font-weight: 900;
+  color: var(--crimson);
+  letter-spacing: .2px;
+}
+
+.topbar-right{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Acceder */
+.topbar-link{
+  background: transparent;
+  border: 0;
+  font-size: 34px;
+  font-weight: 900;
+  color: var(--crimson);
+  cursor: pointer;
+  padding: 6px 10px;
+}
+.topbar-link:hover{ opacity: .85; }
+
+/* Crear cuenta */
+.topbar-cta{
+  background: #f5b2b8;
+  border: 0;
+  padding: 14px 18px;
+  border-radius: 12px;
+  font-size: 22px;
+  font-weight: 900;
+  color: #b0121e;
+  cursor: pointer;
+}
+.topbar-cta:hover{ filter: brightness(.97); }
+
+/* Ajuste landing: ya no usamos landing-top/badge */
+.landing{
+  padding-top: 10px; /* un poco menos porque el header ya ocupa */
+}
+
+/* La imagen derecha: en tu HTML usas class landing-FIEE */
+.landing-FIEE{
+  width: 100%;
+  max-width: 520px;
+  border-radius: 18px;
+  border: 1px solid #f1d5dd;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+}
+
+/* Responsive topbar */
+@media (max-width: 720px){
+  .topbar-brand{ font-size: 24px; }
+  .topbar-link{ font-size: 22px; }
+  .topbar-cta{ font-size: 16px; padding: 10px 12px; }
+}
+
