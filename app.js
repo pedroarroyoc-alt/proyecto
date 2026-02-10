@@ -1,6 +1,19 @@
 // =========================
 // Referencias HTML
 // =========================
+const btnSignup = document.getElementById("btnSignup");
+
+const signupBackdrop = document.getElementById("signupBackdrop");
+const btnCloseSignup = document.getElementById("btnCloseSignup");
+const btnCreateAccount = document.getElementById("btnCreateAccount");
+
+const suFirstName = document.getElementById("suFirstName");
+const suLastName = document.getElementById("suLastName");
+const suEmail = document.getElementById("suEmail");
+const suPassword = document.getElementById("suPassword");
+const suPassword2 = document.getElementById("suPassword2");
+const suTerms = document.getElementById("suTerms");
+
 const landing = document.getElementById("landing");
 const dashboardApp = document.getElementById("dashboardApp");
 
@@ -40,6 +53,78 @@ const state = {
 // =========================
 // Helpers UI
 // =========================
+const USERS_KEY = "cryptolock_users_v1";
+
+function open_signup() {
+  if (signupBackdrop) signupBackdrop.classList.remove("hidden");
+}
+
+function close_signup() {
+  if (signupBackdrop) signupBackdrop.classList.add("hidden");
+}
+
+function load_users() {
+  try {
+    const raw = localStorage.getItem(USERS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function save_users(users) {
+  try {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  } catch {}
+}
+
+function is_uni_email(email) {
+  const e = String(email || "").trim().toLowerCase();
+  return e.endsWith("@uni.pe");
+}
+
+function handle_create_account() {
+  const first = (suFirstName?.value || "").trim();
+  const last = (suLastName?.value || "").trim();
+  const email = (suEmail?.value || "").trim().toLowerCase();
+  const p1 = suPassword?.value || "";
+  const p2 = suPassword2?.value || "";
+  const okTerms = !!suTerms?.checked;
+
+  if (!first || !last) return toast("Completa nombres y apellidos");
+  if (!email) return toast("Ingresa tu correo institucional");
+  if (!is_uni_email(email)) return toast("El correo debe terminar en @uni.pe");
+  if (p1.length < 8) return toast("Contraseña: mínimo 8 caracteres");
+  if (p1 !== p2) return toast("Las contraseñas no coinciden");
+  if (!okTerms) return toast("Debes aceptar los términos");
+
+  const users = load_users();
+  const exists = users.some(u => (u.email || "").toLowerCase() === email);
+  if (exists) return toast("Ese correo ya está registrado");
+
+  // Demo: guardado local (NO es seguro, pero sirve para prototipo)
+  users.unshift({
+    id: `USR-${Math.floor(100000 + Math.random() * 900000)}`,
+    firstName: first,
+    lastName: last,
+    email,
+    createdAt: new Date().toISOString()
+  });
+  save_users(users);
+
+  // Limpia campos
+  if (suFirstName) suFirstName.value = "";
+  if (suLastName) suLastName.value = "";
+  if (suEmail) suEmail.value = "";
+  if (suPassword) suPassword.value = "";
+  if (suPassword2) suPassword2.value = "";
+  if (suTerms) suTerms.checked = false;
+
+  close_signup();
+  toast("Cuenta creada (demo) ✅");
+}
+
 function show(el) {
   if (el) el.classList.remove("hidden");
 }
@@ -381,6 +466,22 @@ function handle_send_action() {
 // =========================
 // Listeners
 // =========================
+// Crear cuenta (abre modal)
+if (btnSignup) btnSignup.addEventListener("click", open_signup);
+
+// Cerrar modal signup
+if (btnCloseSignup) btnCloseSignup.addEventListener("click", close_signup);
+
+// Click afuera para cerrar
+if (signupBackdrop) {
+  signupBackdrop.addEventListener("click", (evt) => {
+    if (evt.target === signupBackdrop) close_signup();
+  });
+}
+
+// Crear cuenta (validar + guardar)
+if (btnCreateAccount) btnCreateAccount.addEventListener("click", handle_create_account);
+
 if (btnEnter) btnEnter.addEventListener("click", go_to_dashboard);
 
 if (btnSignup) {

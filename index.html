@@ -138,6 +138,45 @@
       </div>
     </div>
   </div>
+<!-- Modal: Crear cuenta -->
+<div class="modal-backdrop hidden" id="signupBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Crear una cuenta</h3>
+      <button class="ghost" id="btnCloseSignup">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <label>Nombres</label>
+      <input id="suFirstName" type="text" placeholder="Ej: Pedro" />
+
+      <label>Apellidos</label>
+      <input id="suLastName" type="text" placeholder="Ej: Arroyo" />
+
+      <label>Correo institucional</label>
+      <input id="suEmail" type="email" placeholder="tuusuario@uni.pe" />
+
+      <label>Contraseña</label>
+      <input id="suPassword" type="password" placeholder="Mínimo 8 caracteres" />
+
+      <label>Confirmar contraseña</label>
+      <input id="suPassword2" type="password" placeholder="Repite la contraseña" />
+
+      <label class="checkbox-row">
+        <input id="suTerms" type="checkbox" />
+        <span>Acepto los términos y condiciones</span>
+      </label>
+
+      <div class="form-hint" id="suHint">
+        El correo debe terminar en <b>@uni.pe</b>.
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" id="btnCreateAccount">Crear cuenta</button>
+    </div>
+  </div>
+</div>
 
   <!-- Toast -->
   <div id="toast" class="toast"></div>
