@@ -499,3 +499,26 @@ select, textarea {
   padding: 10px 12px;
   border-radius: 12px;
 }
+.modal-body input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e7eaf0;
+  outline: none;
+  font-family: inherit;
+  width: 100%;
+}
+
+.row{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+
+.hint{
+  margin-top: 10px;
+  font-size: 13px;
+  color: #555;
+}
+
+/* por si tu .hidden no existe */
+.hidden { display: none !important; }
