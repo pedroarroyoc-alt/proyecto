@@ -1,24 +1,18 @@
 from __future__ import annotations
 
+import secrets
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Dict, Optional, List
-import uuid
-import secrets
 
 from domain.usuarios import UsuarioHumano
-
-router = APIRouter(prefix="/users", tags=["Users"])
-
-# "DB" en memoria (luego lo cambiamos a SQLite/Postgres)
-USERS: Dict[str, UsuarioHumano] = {}
-
-# OTP en memoria: email -> otp
-PENDING_EMAIL_OTP: Dict[str, str] = {}
+from services.email_service import send_otp_email
 
 
 # =========================
-# Schemas (lo que llega del frontend)
+# Schemas (request bodies)
 # =========================
 class CreateHumanUser(BaseModel):
     email: EmailStr
@@ -26,10 +20,9 @@ class CreateHumanUser(BaseModel):
     telefono: Optional[str] = ""
     mfaHabilitado: bool = False
 
-    # ✅ valida dominio @uni.pe
     @field_validator("email")
     @classmethod
-    def only_uni_pe(cls, v: EmailStr):
+    def only_uni_pe(cls, v: EmailStr) -> str:
         email = str(v).strip().lower()
         if not email.endswith("@uni.pe"):
             raise ValueError("El correo debe ser @uni.pe")
@@ -42,91 +35,190 @@ class VerifyEmailRequest(BaseModel):
 
     @field_validator("email")
     @classmethod
-    def normalize_email(cls, v: EmailStr):
+    def normalize_email(cls, v: EmailStr) -> str:
         return str(v).strip().lower()
 
 
 # =========================
-# Helpers
+# Errores de dominio/servicio
 # =========================
-def to_public(u: UsuarioHumano) -> dict:
-    # usa tu método del dominio
-    return u.obtenerPerfil()
+@dataclass
+class UserError(Exception):
+    message: str
+    status_code: int
 
 
 # =========================
-# Endpoints
+# Repository (memoria)
 # =========================
-@router.post("/human")
-def create_human_user(payload: CreateHumanUser):
-    email = payload.email.strip().lower()
+class UserRepository:
+    """Equivalente a USERS: Dict[str, UsuarioHumano]"""
 
-    # Evitar duplicados por email
-    for u in USERS.values():
-        if u.email.lower() == email:
-            raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
+    def __init__(self) -> None:
+        self._users: Dict[str, UsuarioHumano] = {}
 
-    # Crear usuario en estado PENDIENTE (según domain/usuarios.py recomendado)
-    user = UsuarioHumano(
-        email=email,
-        nombre=payload.nombre,
-        telefono=payload.telefono or "",
-        mfaHabilitado=payload.mfaHabilitado,
-    )
+    def save(self, user: UsuarioHumano) -> UsuarioHumano:
+        self._users[str(user.id)] = user
+        return user
 
-    user_id = str(user.id)
-    USERS[user_id] = user
+    def list_all(self) -> List[UsuarioHumano]:
+        return list(self._users.values())
 
-    # OTP simulado (6 dígitos)
-    otp = f"{secrets.randbelow(1_000_000):06d}"
-    PENDING_EMAIL_OTP[email] = otp
+    def get_by_id(self, user_id: str) -> Optional[UsuarioHumano]:
+        return self._users.get(user_id)
 
-    return {
-        "user": to_public(user),
-        "message": "Usuario creado. Verifica tu correo para activarlo.",
-        "otp_simulado": otp,  # ⚠️ SOLO DEMO
-    }
+    def get_by_email(self, email: str) -> Optional[UsuarioHumano]:
+        normalized = email.strip().lower()
+        for u in self._users.values():
+            if u.email.lower() == normalized:
+                return u
+        return None
 
 
-@router.post("/verify-email")
-def verify_email(payload: VerifyEmailRequest):
-    email = str(payload.email).strip().lower()
-    otp = (payload.otp or "").strip()
+# =========================
+# OTP Manager (memoria)
+# =========================
+from datetime import datetime, timedelta
 
-    expected = PENDING_EMAIL_OTP.get(email)
-    if not expected:
-        raise HTTPException(status_code=404, detail="No hay verificación pendiente para este email")
+class OtpManager:
+    def __init__(self):
+        self._pending_email_otp: Dict[str, tuple[str, datetime]] = {}
 
-    if otp != expected:
-        raise HTTPException(status_code=401, detail="OTP inválido")
+    def generate_for_email(self, email: str) -> str:
+        otp = f"{secrets.randbelow(1_000_000):06d}"
+        expiry = datetime.utcnow() + timedelta(minutes=5)
+        self._pending_email_otp[email.strip().lower()] = (otp, expiry)
+        return otp
 
-    # Buscar usuario por email
-    user_found: Optional[UsuarioHumano] = None
-    for u in USERS.values():
-        if u.email.lower() == email:
-            user_found = u
-            break
+    def get_expected(self, email: str) -> Optional[str]:
+        record = self._pending_email_otp.get(email.strip().lower())
+        if not record:
+            return None
 
-    if not user_found:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        otp, expiry = record
+        if datetime.utcnow() > expiry:
+            self._pending_email_otp.pop(email.strip().lower(), None)
+            return None
 
-    # Activar
-    user_found.marcar_email_verificado()
+        return otp
 
-    # limpiar OTP
-    PENDING_EMAIL_OTP.pop(email, None)
+# =========================
+# Service (lógica negocio)
+# =========================
+class UserService:
+    def __init__(self, repository: UserRepository, otp_manager: OtpManager) -> None:
+        self._repository = repository
+        self._otp_manager = otp_manager
 
-    return {"user": to_public(user_found), "message": "Correo verificado. Usuario ACTIVADO."}
+    def create_human_user(self, payload: CreateHumanUser) -> dict:
+        email = str(payload.email).strip().lower()
+
+        # Evitar duplicados por email (igual que tu for en USERS.values())
+        if self._repository.get_by_email(email):
+            raise UserError(message="Ya existe un usuario con ese email", status_code=409)
+
+        user = UsuarioHumano(
+            email=email,
+            nombre=payload.nombre,
+            telefono=payload.telefono or "",
+            mfaHabilitado=payload.mfaHabilitado,
+        )
+
+        self._repository.save(user)
+
+        otp = self._otp_manager.generate_for_email(email)
+
+        send_otp_email(email, otp)
+
+        return {
+             "user": self.to_public(user),
+            "message": "Usuario creado. Revisa tu correo para el código de verificación.",
+        }
 
 
-@router.get("")
-def list_users() -> List[dict]:
-    return [to_public(u) for u in USERS.values()]
+    def verify_email(self, payload: VerifyEmailRequest) -> dict:
+        email = str(payload.email).strip().lower()
+        otp = (payload.otp or "").strip()
+
+        expected = self._otp_manager.get_expected(email)
+        if not expected:
+            raise UserError(
+                message="No hay verificación pendiente para este email",
+                status_code=404,
+            )
+
+        if otp != expected:
+            raise UserError(message="OTP inválido", status_code=401)
+
+        user = self._repository.get_by_email(email)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        user.marcar_email_verificado()
+        self._otp_manager.clear(email)
+
+        return {
+            "user": self.to_public(user),
+            "message": "Correo verificado. Usuario ACTIVADO.",
+        }
+
+    def list_users(self) -> List[dict]:
+        return [self.to_public(u) for u in self._repository.list_all()]
+
+    def get_user(self, user_id: str) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+        return self.to_public(user)
+
+    @staticmethod
+    def to_public(u: UsuarioHumano) -> dict:
+        return u.obtenerPerfil()
 
 
-@router.get("/{user_id}")
-def get_user(user_id: str):
-    u = USERS.get(user_id)
-    if not u:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return to_public(u)
+# =========================
+# Controller (FastAPI Router)
+# =========================
+class UserController:
+    def __init__(self, service: UserService) -> None:
+        self._service = service
+        self.router = APIRouter(prefix="/users", tags=["Users"])
+        self._register_routes()
+
+    def _register_routes(self) -> None:
+        self.router.post("/human")(self.create_human_user)
+        self.router.post("/verify-email")(self.verify_email)
+        self.router.get("")(self.list_users)            # GET /users
+        self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
+
+    def create_human_user(self, payload: CreateHumanUser) -> dict:
+        try:
+            return self._service.create_human_user(payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def verify_email(self, payload: VerifyEmailRequest) -> dict:
+        try:
+            return self._service.verify_email(payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def list_users(self) -> List[dict]:
+        return self._service.list_users()
+
+    def get_user(self, user_id: str) -> dict:
+        try:
+            return self._service.get_user(user_id)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+# =========================
+# Wiring (instancias)
+# =========================
+user_repository = UserRepository()
+otp_manager = OtpManager()
+user_service = UserService(repository=user_repository, otp_manager=otp_manager)
+user_controller = UserController(service=user_service)
+
+router = user_controller.router

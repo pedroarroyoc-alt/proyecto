@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# ⬇️ antes: from api.users import router as users_router
 from api.users import router as users_router
 
 app = FastAPI(title="CryptoLock Backend", version="0.1.0")
