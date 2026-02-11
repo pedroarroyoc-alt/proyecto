@@ -200,5 +200,63 @@
 
   <!-- JS: lógica del frontend -->
   <script src="./app.js"></script>
+<!-- =========================
+     Modal ACCEDER (LOGIN)
+========================= -->
+<div class="backdrop hidden" id="loginBackdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <div class="modal-head">
+      <div>
+        <h2 id="loginTitle">Acceder</h2>
+        <p class="muted">Inicia sesión para entrar a tu dashboard.</p>
+      </div>
+      <button class="icon-btn" id="btnCloseLogin" aria-label="Cerrar">✕</button>
+    </div>
+
+    <form class="form" id="loginForm">
+      <label class="field">
+        <span>Correo</span>
+        <input id="liEmail" type="email" placeholder="tu@correo.com" required />
+      </label>
+
+      <label class="field">
+        <span>Contraseña</span>
+        <div class="password-row">
+          <input id="liPassword" type="password" placeholder="••••••••" required />
+          <button type="button" class="ghost-btn" id="btnTogglePwd">Mostrar</button>
+        </div>
+      </label>
+
+      <div class="row-between">
+        <label class="check">
+          <input type="checkbox" id="liRemember" />
+          <span>Recordarme</span>
+        </label>
+
+        <a href="#" class="link" id="btnForgot">¿Olvidaste tu contraseña?</a>
+      </div>
+
+      <button type="submit" class="primary-btn">Ingresar</button>
+
+      <div class="divider"><span>o</span></div>
+
+      <button type="button" class="oauth-btn" id="btnGoogle">
+        <span class="oauth-ico">G</span>
+        <span>Continuar con Google</span>
+      </button>
+
+      <button type="button" class="oauth-btn" id="btnGithub">
+        <span class="oauth-ico">⌂</span>
+        <span>Continuar con GitHub</span>
+      </button>
+
+      <p class="muted small center">
+        ¿No tienes cuenta?
+        <a href="#" class="link" id="btnGoSignup">Crear cuenta</a>
+      </p>
+    </form>
+  </div>
+</div>
+
 </body>
 </html>

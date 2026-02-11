@@ -15,6 +15,7 @@ const btnAbout = document.getElementById("btnAbout");
 const aboutBox = document.getElementById("aboutBox");
 
 /* ===== Modal Crear Cuenta ===== */
+
 const signupBackdrop = document.getElementById("signupBackdrop");
 const btnCloseSignup = document.getElementById("btnCloseSignup");
 const btnCreateAccount = document.getElementById("btnCreateAccount");
@@ -34,6 +35,19 @@ const suTerms = document.getElementById("suTerms");
 const suOtp = document.getElementById("suOtp");
 const btnVerifyOtp = document.getElementById("btnVerifyOtp");
 const otpHint = document.getElementById("otpHint");
+
+/* ===== Modal Acceder (Login) ===== */
+const loginBackdrop = document.getElementById("loginBackdrop");
+const btnCloseLogin = document.getElementById("btnCloseLogin");
+const loginForm = document.getElementById("loginForm");
+const liEmail = document.getElementById("liEmail");
+const liPassword = document.getElementById("liPassword");
+const btnTogglePwd = document.getElementById("btnTogglePwd");
+const btnForgot = document.getElementById("btnForgot");
+const btnGoogle = document.getElementById("btnGoogle");
+const btnGithub = document.getElementById("btnGithub");
+const btnGoSignup = document.getElementById("btnGoSignup");
+
 
 /* ===== Dashboard ===== */
 const listEl = document.getElementById("list");
@@ -79,6 +93,16 @@ function open_signup() {
   show(signupBackdrop);
   reset_signup_modal();
 }
+
+function open_login() {
+  show(loginBackdrop);
+  setTimeout(() => liEmail?.focus(), 0);
+}
+
+function close_login() {
+  hide(loginBackdrop);
+}
+
 
 function close_signup() {
   hide(signupBackdrop);
@@ -290,10 +314,42 @@ signupBackdrop?.addEventListener("click", e => e.target === signupBackdrop && cl
 btnCreateAccount?.addEventListener("click", handle_create_account);
 btnVerifyOtp?.addEventListener("click", handle_verify_otp);
 
-btnEnter?.addEventListener("click", go_to_dashboard);
+btnEnter?.addEventListener("click", open_login);
+
 
 btnAbout?.addEventListener("click", () => {
   if (aboutBox) aboutBox.classList.toggle("hidden");
+});
+btnCloseLogin?.addEventListener("click", close_login);
+loginBackdrop?.addEventListener("click", e => e.target === loginBackdrop && close_login());
+
+btnTogglePwd?.addEventListener("click", () => {
+  const isPwd = liPassword.type === "password";
+  liPassword.type = isPwd ? "text" : "password";
+  btnTogglePwd.textContent = isPwd ? "Ocultar" : "Mostrar";
+});
+
+// Submit (solo visual): entrar al dashboard como demo
+loginForm?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  toast("Acceso (demo) ✅");
+  close_login();
+  go_to_dashboard(); // por ahora, solo UI
+});
+
+btnForgot?.addEventListener("click", () => toast("Recuperación (solo visual)"));
+btnGoogle?.addEventListener("click", () => toast("Google (solo visual)"));
+btnGithub?.addEventListener("click", () => toast("GitHub (solo visual)"));
+
+// Ir a crear cuenta desde login
+btnGoSignup?.addEventListener("click", () => {
+  close_login();
+  open_signup();
+});
+
+// Cerrar con ESC
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") close_login();
 });
 
 // =========================

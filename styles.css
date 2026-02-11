@@ -522,3 +522,61 @@ select, textarea {
 
 /* por si tu .hidden no existe */
 .hidden { display: none !important; }
+/* =========================
+   Login modal extras (compatible con tu CSS)
+========================= */
+.divider-login{
+  position: relative;
+  text-align: center;
+  margin: 10px 0;
+}
+.divider-login::before{
+  content:"";
+  position:absolute;
+  left:0; right:0;
+  top:50%;
+  height:1px;
+  background:#e7eaf0;
+}
+.divider-login span{
+  position:relative;
+  background:#fff;
+  padding:0 10px;
+  font-size:12px;
+  color:#666;
+  font-weight:900;
+}
+
+.oauth-btn{
+  width: 100%;
+  border: 1px solid #e7eaf0;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.oauth-btn:hover{ background:#f6f8fb; }
+
+.oauth-ico{
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--crimson);
+  color: #fff;
+  font-weight: 900;
+}
+
+.linklike{
+  border: 0;
+  background: transparent;
+  color: var(--crimson);
+  font-weight: 900;
+  padding: 0;
+}
+.linklike:hover{ text-decoration: underline; }
