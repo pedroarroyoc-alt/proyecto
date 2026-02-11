@@ -42,12 +42,13 @@ const btnCloseLogin = document.getElementById("btnCloseLogin");
 const loginForm = document.getElementById("loginForm");
 const liEmail = document.getElementById("liEmail");
 const liPassword = document.getElementById("liPassword");
+const liRemember = document.getElementById("liRemember");
 const btnTogglePwd = document.getElementById("btnTogglePwd");
-const btnForgot = document.getElementById("btnForgot");
-const btnGoogle = document.getElementById("btnGoogle");
-const btnGithub = document.getElementById("btnGithub");
 const btnGoSignup = document.getElementById("btnGoSignup");
-
+const loginOtpBackdrop = document.getElementById("loginOtpBackdrop");
+const btnCloseLoginOtp = document.getElementById("btnCloseLoginOtp");
+const loginOtpForm = document.getElementById("loginOtpForm");
+const liOtp = document.getElementById("liOtp");
 
 /* ===== Dashboard ===== */
 const listEl = document.getElementById("list");
@@ -78,6 +79,8 @@ const state = {
 };
 
 let pendingEmail = "";
+let pendingLoginIdentifier = "";
+const DEMO_LOGIN_OTP = "123456";
 
 // =========================
 // Helpers UI
@@ -103,6 +106,18 @@ function close_login() {
   hide(loginBackdrop);
 }
 
+function open_login_otp(identifier) {
+  pendingLoginIdentifier = identifier;
+  if (liOtp) liOtp.value = "";
+  hide(loginBackdrop);
+  show(loginOtpBackdrop);
+  setTimeout(() => liOtp?.focus(), 0);
+  toast("Código OTP enviado (demo: 123456)");
+}
+
+function close_login_otp() {
+  hide(loginOtpBackdrop);
+}
 
 function close_signup() {
   hide(signupBackdrop);
@@ -303,6 +318,13 @@ function go_to_landing() {
   show(landing);
   hide(dashboardApp);
 }
+function preload_login_identifier() {
+  const saved = localStorage.getItem("cryptolock_last_login");
+  if (saved && liEmail) {
+    liEmail.value = saved;
+    if (liRemember) liRemember.checked = true;
+  }
+}
 
 // =========================
 // Listeners
@@ -321,7 +343,9 @@ btnAbout?.addEventListener("click", () => {
   if (aboutBox) aboutBox.classList.toggle("hidden");
 });
 btnCloseLogin?.addEventListener("click", close_login);
+btnCloseLoginOtp?.addEventListener("click", close_login_otp);
 loginBackdrop?.addEventListener("click", e => e.target === loginBackdrop && close_login());
+loginOtpBackdrop?.addEventListener("click", e => e.target === loginOtpBackdrop && close_login_otp());
 
 btnTogglePwd?.addEventListener("click", () => {
   const isPwd = liPassword.type === "password";
@@ -329,17 +353,45 @@ btnTogglePwd?.addEventListener("click", () => {
   btnTogglePwd.textContent = isPwd ? "Ocultar" : "Mostrar";
 });
 
-// Submit (solo visual): entrar al dashboard como demo
+function valid_login_identifier(value) {
+  const v = String(value || "").trim();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const phoneRegex = /^\+?\d{7,15}$/;
+  return emailRegex.test(v) || phoneRegex.test(v.replace(/[\s()-]/g, ""));
+}
+
+// Submit (paso 1): validar y pedir OTP
 loginForm?.addEventListener("submit", (e) => {
   e.preventDefault();
-  toast("Acceso (demo) ✅");
-  close_login();
-  go_to_dashboard(); // por ahora, solo UI
+  const identifier = liEmail?.value?.trim() || "";
+  const pwd = liPassword?.value || "";
+
+  if (!identifier) return toast("Ingresa tu correo o teléfono");
+  if (!valid_login_identifier(identifier)) return toast("Formato inválido: usa correo o teléfono");
+  if (!pwd) return toast("Ingresa tu contraseña");
+
+  if (liRemember?.checked) {
+    localStorage.setItem("cryptolock_last_login", identifier);
+  } else {
+    localStorage.removeItem("cryptolock_last_login");
+  }
+
+  open_login_otp(identifier);
 });
 
-btnForgot?.addEventListener("click", () => toast("Recuperación (solo visual)"));
-btnGoogle?.addEventListener("click", () => toast("Google (solo visual)"));
-btnGithub?.addEventListener("click", () => toast("GitHub (solo visual)"));
+// Submit OTP (paso 2)
+loginOtpForm?.addEventListener("submit", (e) => {
+  e.preventDefault();
+
+  const otp = String(liOtp?.value || "").trim();
+  if (!pendingLoginIdentifier) return toast("No hay inicio de sesión pendiente");
+  if (!/^\d{6}$/.test(otp)) return toast("Ingresa un OTP de 6 dígitos");
+  if (otp !== DEMO_LOGIN_OTP) return toast("OTP inválido");
+
+  toast("Acceso verificado ✅");
+  close_login_otp();
+  go_to_dashboard();
+});
 
 // Ir a crear cuenta desde login
 btnGoSignup?.addEventListener("click", () => {
@@ -349,11 +401,14 @@ btnGoSignup?.addEventListener("click", () => {
 
 // Cerrar con ESC
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") close_login();
+  if (e.key !== "Escape") return;
+  close_login();
+  close_login_otp();
 });
 
 // =========================
 // Init
 // =========================
 state.items = load_items();
+preload_login_identifier();
 go_to_landing();

@@ -197,9 +197,6 @@
 
   <!-- Toast -->
   <div id="toast" class="toast"></div>
-
-  <!-- JS: lógica del frontend -->
-  <script src="./app.js"></script>
 <!-- =========================
      Modal ACCEDER (LOGIN)
 ========================= -->
@@ -215,8 +212,8 @@
 
     <form class="form" id="loginForm">
       <label class="field">
-        <span>Correo</span>
-        <input id="liEmail" type="email" placeholder="tu@correo.com" required />
+        <span>Correo o teléfono</span>
+        <input id="liEmail" type="text" placeholder="Correo electrónico o teléfono" required />
       </label>
 
       <label class="field">
@@ -227,28 +224,13 @@
         </div>
       </label>
 
-      <div class="row-between">
-        <label class="check">
-          <input type="checkbox" id="liRemember" />
-          <span>Recordarme</span>
-        </label>
-
-        <a href="#" class="link" id="btnForgot">¿Olvidaste tu contraseña?</a>
-      </div>
+      <label class="check">
+        <input type="checkbox" id="liRemember" />
+        <span>Recordarme</span>
+      </label>
 
       <button type="submit" class="primary-btn">Ingresar</button>
 
-      <div class="divider"><span>o</span></div>
-
-      <button type="button" class="oauth-btn" id="btnGoogle">
-        <span class="oauth-ico">G</span>
-        <span>Continuar con Google</span>
-      </button>
-
-      <button type="button" class="oauth-btn" id="btnGithub">
-        <span class="oauth-ico">⌂</span>
-        <span>Continuar con GitHub</span>
-      </button>
 
       <p class="muted small center">
         ¿No tienes cuenta?
@@ -257,6 +239,32 @@
     </form>
   </div>
 </div>
+  <!-- Modal OTP de acceso -->
+  <div class="backdrop hidden" id="loginOtpBackdrop" aria-hidden="true">
+    <div class="modal otp-modal" role="dialog" aria-modal="true" aria-labelledby="loginOtpTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="loginOtpTitle">Verificación de acceso</h2>
+          <p class="muted">Ingresa el código OTP para completar el ingreso.</p>
+        </div>
+        <button class="icon-btn" id="btnCloseLoginOtp" aria-label="Cerrar">✕</button>
+      </div>
+
+      <form class="form" id="loginOtpForm">
+        <label class="field">
+          <span>Código OTP</span>
+          <input id="liOtp" type="text" inputmode="numeric" placeholder="Ej: 123456" required />
+        </label>
+
+        <p class="muted small">Revisa tu correo o dispositivo para obtener el código.</p>
+
+        <button type="submit" class="primary-btn">Verificar OTP</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- JS: lógica del frontend (al final para asegurar que cargue todos los modales) -->
+  <script src="./app.js"></script>
 
 </body>
 </html>

@@ -580,3 +580,84 @@ select, textarea {
   padding: 0;
 }
 .linklike:hover{ text-decoration: underline; }
+
+/* Modal login estilo Gmail/Facebook */
+.backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 30;
+}
+.backdrop.hidden{ display:none; }
+
+.modal-head{
+  padding: 14px 16px;
+  border-bottom: 1px solid #e7eaf0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.form{ padding: 14px 16px; display:grid; gap:12px; }
+.field{ display:grid; gap:6px; font-size:13px; color:#444; font-weight:700; }
+.field input{
+  width:100%;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid #e7eaf0;
+}
+.password-row{ display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+.ghost-btn{
+  border:1px solid #e7eaf0;
+  background:#fff;
+  border-radius:10px;
+  padding:8px 10px;
+  cursor:pointer;
+}
+.row-between{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.check{ display:flex; align-items:center; gap:8px; font-size:13px; color:#444; }
+.link{ color:var(--crimson); font-weight:700; text-decoration:none; }
+.link:hover{ text-decoration:underline; }
+.primary-btn{
+  border:none;
+  background:#1a73e8;
+  color:#fff;
+  border-radius:12px;
+  padding:11px 12px;
+  font-weight:800;
+  cursor:pointer;
+}
+.primary-btn:hover{ filter:brightness(.97); }
+.divider{
+  position:relative;
+  text-align:center;
+  margin: 4px 0;
+}
+.divider::before{
+  content:"";
+  position:absolute;
+  left:0; right:0; top:50%;
+  border-top:1px solid #e7eaf0;
+}
+.divider span{
+  position:relative;
+  background:#fff;
+  padding:0 10px;
+  color:#666;
+  font-size:12px;
+}
+.muted{ color:#666; margin:0; }
+.small{ font-size:13px; }
+.center{ text-align:center; }
+.icon-btn{
+  border:1px solid #e7eaf0;
+  background:#fff;
+  border-radius:10px;
+  width:34px;
+  height:34px;
+  cursor:pointer;
+}
