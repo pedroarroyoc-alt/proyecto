@@ -102,6 +102,9 @@ class OtpManager:
 
         return otp
 
+    def clear(self, email: str) -> None:
+        self._pending_email_otp.pop(email.strip().lower(), None)
+
 # =========================
 # Service (lógica negocio)
 # =========================
@@ -128,8 +131,11 @@ class UserService:
 
         otp = self._otp_manager.generate_for_email(email)
 
-        send_otp_email(email, otp)
-
+        try:
+            send_otp_email(email, otp)
+        except Exception as exc:
+            # No bloqueamos el registro si falla el SMTP en entorno local.
+            print(f"[WARN] No se pudo enviar OTP a {email}: {exc}")
         return {
              "user": self.to_public(user),
             "message": "Usuario creado. Revisa tu correo para el código de verificación.",
