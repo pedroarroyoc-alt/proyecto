@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import secrets
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -130,16 +131,29 @@ class UserService:
         self._repository.save(user)
 
         otp = self._otp_manager.generate_for_email(email)
+        email_sent = True
+        message = "Usuario creado. Revisa tu correo para el código de verificación."
 
         try:
             send_otp_email(email, otp)
         except Exception as exc:
-            # No bloqueamos el registro si falla el SMTP en entorno local.
+            email_sent = False
+            message = (
+                "Usuario creado, pero no se pudo enviar el OTP por correo. "
+                "Verifica la configuración SMTP del backend."
+            )
             print(f"[WARN] No se pudo enviar OTP a {email}: {exc}")
-        return {
-             "user": self.to_public(user),
-            "message": "Usuario creado. Revisa tu correo para el código de verificación.",
+        response = {
+            "user": self.to_public(user),
+            "message": message,
+            "emailSent": email_sent,
         }
+
+        if not email_sent and os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true":
+            response["otpDebug"] = otp
+
+        return response
+
 
 
     def verify_email(self, payload: VerifyEmailRequest) -> dict:

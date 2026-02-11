@@ -186,7 +186,13 @@ async function handle_create_account() {
 
 // ✅ OTP real: no viene en la respuesta. Solo pasamos a paso 2.
     show_otp_step(email);
-    toast("Te enviamos un OTP a tu correo 📩");
+        if (data?.emailSent === false) {
+          otpHint.textContent = data?.otpDebug
+            ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
+            : "No se pudo enviar correo. Solicita soporte para configurar SMTP.";
+        }
+
+        toast(data?.message || "Te enviamos un OTP a tu correo 📩");
 
 
   } catch (err) {
