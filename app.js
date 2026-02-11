@@ -84,12 +84,21 @@ function close_signup() {
   hide(signupBackdrop);
 }
 
+function set_signup_hint(message, isError = false) {
+  if (!signupHint) return;
+  signupHint.textContent = message;
+  signupHint.classList.toggle("is-error", Boolean(isError));
+}
+
+function show_signup_error(message) {
+  set_signup_hint(message, true);
+  toast(message);
+}
+ 
 function reset_signup_modal() {
   pendingEmail = "";
   signupTitle.textContent = "Crear una cuenta";
-  if (signupHint) {
-    signupHint.innerHTML = "El correo debe terminar en <b>@gmail.com</b>.";
-  }
+  set_signup_hint("El correo debe terminar en @gmail.com.");
   otpHint.textContent = "";
 
   show(stepForm);
@@ -114,6 +123,10 @@ function is_gmail(email) {
   return String(email || "").toLowerCase().endsWith("@gmail.com");
 }
 
+function looks_like_gamil_typo(email) {
+  return String(email || "").toLowerCase().endsWith("@gamil.com");
+}
+
 // =========================
 // Toast
 // =========================
@@ -136,7 +149,7 @@ function toast(msg) {
 // =========================
 async function handle_create_account() {
   try {
-    if (signupHint) signupHint.textContent = "";
+    set_signup_hint("Validando datos...");
 
     const first = suFirstName.value.trim();
     const last = suLastName.value.trim();
@@ -145,12 +158,13 @@ async function handle_create_account() {
     const p2 = suPassword2.value;
     const okTerms = suTerms.checked;
 
-    if (!first || !last) return toast("Completa nombres y apellidos");
-    if (!email) return toast("Ingresa tu correo");
-    if (!is_gmail(email)) return toast("El correo debe terminar en @gmail.com");
-    if (p1.length < 8) return toast("Contraseña mínima: 8 caracteres");
-    if (p1 !== p2) return toast("Las contraseñas no coinciden");
-    if (!okTerms) return toast("Acepta los términos");
+    if (!first || !last) return show_signup_error("Completa nombres y apellidos");
+    if (!email) return show_signup_error("Ingresa tu correo");
+    if (looks_like_gamil_typo(email)) return show_signup_error("Parece que escribiste @gamil.com. Debe ser @gmail.com");
+    if (!is_gmail(email)) return show_signup_error("El correo debe terminar en @gmail.com");
+    if (p1.length < 8) return show_signup_error("Contraseña mínima: 8 caracteres");
+    if (p1 !== p2) return show_signup_error("Las contraseñas no coinciden");
+    if (!okTerms) return show_signup_error("Acepta los términos");
 
     btnCreateAccount.disabled = true;
     btnCreateAccount.textContent = "Creando...";
@@ -168,7 +182,7 @@ async function handle_create_account() {
 
     const data = await res.json();
 
-    if (!res.ok) return toast(data?.detail || "Error creando usuario");
+    if (!res.ok) return show_signup_error(data?.detail || "Error creando usuario");
 
 // ✅ OTP real: no viene en la respuesta. Solo pasamos a paso 2.
     show_otp_step(email);
@@ -177,7 +191,10 @@ async function handle_create_account() {
 
   } catch (err) {
     console.error(err);
-    toast("Error de red o servidor");
+    const msg = err instanceof TypeError
+      ? `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`
+      : "Error de red o servidor";
+    show_signup_error(msg);
   } finally {
     btnCreateAccount.disabled = false;
     btnCreateAccount.textContent = "Crear cuenta";
