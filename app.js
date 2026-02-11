@@ -80,7 +80,6 @@ const state = {
 
 let pendingEmail = "";
 let pendingLoginIdentifier = "";
-const DEMO_LOGIN_OTP = "123456";
 
 // =========================
 // Helpers UI
@@ -112,7 +111,6 @@ function open_login_otp(identifier) {
   hide(loginBackdrop);
   show(loginOtpBackdrop);
   setTimeout(() => liOtp?.focus(), 0);
-  toast("Código OTP enviado (demo: 123456)");
 }
 
 function close_login_otp() {
@@ -361,7 +359,7 @@ function valid_login_identifier(value) {
 }
 
 // Submit (paso 1): validar y pedir OTP
-loginForm?.addEventListener("submit", (e) => {
+loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const identifier = liEmail?.value?.trim() || "";
   const pwd = liPassword?.value || "";
@@ -370,27 +368,94 @@ loginForm?.addEventListener("submit", (e) => {
   if (!valid_login_identifier(identifier)) return toast("Formato inválido: usa correo o teléfono");
   if (!pwd) return toast("Ingresa tu contraseña");
 
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(identifier)) {
+    return toast("Por ahora el login OTP solo admite correo electrónico");
+  }
+
   if (liRemember?.checked) {
     localStorage.setItem("cryptolock_last_login", identifier);
   } else {
     localStorage.removeItem("cryptolock_last_login");
   }
 
-  open_login_otp(identifier);
+  const submitBtn = loginForm.querySelector('button[type="submit"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Enviando OTP...";
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/login/request-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: identifier.toLowerCase() }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return toast(data?.detail || "No se pudo enviar el OTP");
+    }
+
+    if (data?.emailSent === false) {
+      const debugOtp = data?.otpDebug ? ` OTP de prueba: ${data.otpDebug}` : "";
+      toast(`${data?.message || "No se pudo enviar el correo OTP."}${debugOtp}`);
+    } else {
+      toast(data?.message || "OTP enviado. Revisa tu correo 📩");
+    }
+
+    open_login_otp(identifier.toLowerCase());
+  } catch (err) {
+    console.error(err);
+    toast(`No se pudo conectar con el backend (${API_BASE})`);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Ingresar";
+    }
+  }
 });
 
 // Submit OTP (paso 2)
-loginOtpForm?.addEventListener("submit", (e) => {
+loginOtpForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const otp = String(liOtp?.value || "").trim();
   if (!pendingLoginIdentifier) return toast("No hay inicio de sesión pendiente");
   if (!/^\d{6}$/.test(otp)) return toast("Ingresa un OTP de 6 dígitos");
-  if (otp !== DEMO_LOGIN_OTP) return toast("OTP inválido");
 
-  toast("Acceso verificado ✅");
-  close_login_otp();
-  go_to_dashboard();
+
+  const submitBtn = loginOtpForm.querySelector('button[type="submit"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Verificando...";
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/login/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: pendingLoginIdentifier, otp }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return toast(data?.detail || "OTP inválido");
+    }
+
+    toast(data?.message || "Acceso verificado ✅");
+    close_login_otp();
+    pendingLoginIdentifier = "";
+    go_to_dashboard();
+  } catch (err) {
+    console.error(err);
+    toast(`No se pudo conectar con el backend (${API_BASE})`);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Verificar OTP";
+    }
+  }
 });
 
 // Ir a crear cuenta desde login

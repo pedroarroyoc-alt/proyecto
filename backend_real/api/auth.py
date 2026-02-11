@@ -1,8 +1,10 @@
+import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 
 # reutiliza tu lógica actual (ajusta imports según tu proyecto)
-from services.email_service import send_otp_email
+from services.email_service import EmailDeliveryError, send_otp_email
 # si ya tienes un servicio OTP (guardar/validar), úsalo.
 # aquí te dejo una versión simple en memoria para demo:
 import secrets
@@ -27,13 +29,20 @@ def request_login_otp(payload: LoginRequest):
     otp = f"{secrets.randbelow(10**6):06d}"
     _otp_store[email] = {"otp": otp, "exp": datetime.utcnow() + timedelta(minutes=10)}
 
+    email_sent = True
+    message = "OTP enviado"
+
     try:
         send_otp_email(email, otp)
-    except Exception as e:
-        # si falla smtp, devuelve error real
-        raise HTTPException(status_code=500, detail=f"No se pudo enviar OTP: {e}")
+    except EmailDeliveryError as exc:
+        email_sent = False
+        message = "No se pudo enviar el OTP por correo. Revisa la configuración SMTP."
+        print(f"[WARN] No se pudo enviar OTP de login a {email}: {exc}")
 
-    return {"message": "OTP enviado", "emailSent": True}
+    response = {"message": message, "emailSent": email_sent}
+    if not email_sent and os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true":
+        response["otpDebug"] = otp
+    return response
 
 @router.post("/login/verify-otp")
 def verify_login_otp(payload: LoginVerify):
