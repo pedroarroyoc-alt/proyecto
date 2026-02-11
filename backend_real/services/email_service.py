@@ -1,5 +1,6 @@
 import os
 import smtplib
+from email.utils import parseaddr
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -15,12 +16,14 @@ def _first_present_env(*keys: str) -> str:
     return ""
 
 
-def _smtp_settings() -> tuple[str, int, str, str]:
-    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
+def _smtp_settings() -> tuple[str, int, str, str, str, bool]:
+    smtp_server = _first_present_env("SMTP_SERVER", "SMTP_HOST") or "smtp.gmail.com"
     smtp_port_raw = os.getenv("SMTP_PORT", "587").strip()
+    smtp_tls = os.getenv("SMTP_TLS", "1").strip().lower() not in {"0", "false", "no"}
 
     # Compatibilidad con nombres de variables frecuentes en distintos entornos.
     smtp_sender = _first_present_env("SMTP_SENDER", "SMTP_USER", "EMAIL_USER", "GMAIL_USER")
+    smtp_user = _first_present_env("SMTP_USER", "EMAIL_USER", "GMAIL_USER")
     smtp_password = _first_present_env(
         "SMTP_PASSWORD",
         "SMTP_PASS",
@@ -49,11 +52,17 @@ def _smtp_settings() -> tuple[str, int, str, str]:
             "SMTP password no configurado. Define SMTP_PASSWORD (o SMTP_PASS/EMAIL_PASSWORD/GMAIL_APP_PASSWORD)."
         )
 
-    return smtp_server, smtp_port, smtp_sender, smtp_password
+    login_user = smtp_user or parseaddr(smtp_sender)[1]
+    if not login_user:
+        raise EmailDeliveryError(
+            "SMTP user no configurado. Define SMTP_USER para la autenticación SMTP."
+        )
+
+    return smtp_server, smtp_port, smtp_sender, login_user, smtp_password, smtp_tls
 
 
 def send_otp_email(to_email: str, otp: str) -> None:
-    smtp_server, smtp_port, smtp_sender, smtp_password = _smtp_settings()
+    smtp_server, smtp_port, smtp_sender, login_user, smtp_password, smtp_tls = _smtp_settings()
 
     subject = "Verificación CryptoLock"
     body = f"""
@@ -74,9 +83,10 @@ def send_otp_email(to_email: str, otp: str) -> None:
 
     try:
         with smtplib.SMTP(smtp_server, smtp_port, timeout=20) as server:
-            server.starttls()
-            server.login(smtp_sender, smtp_password)
-            server.sendmail(smtp_sender, to_email, msg.as_string())
+            if smtp_tls:
+                server.starttls()
+            server.login(login_user, smtp_password)
+            server.sendmail(login_user, to_email, msg.as_string())
     except smtplib.SMTPException as exc:
         raise EmailDeliveryError(f"No se pudo enviar el correo OTP: {exc}") from exc
     except OSError as exc:
