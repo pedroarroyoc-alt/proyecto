@@ -24,8 +24,8 @@ class CreateHumanUser(BaseModel):
     @classmethod
     def only_uni_pe(cls, v: EmailStr) -> str:
         email = str(v).strip().lower()
-        if not email.endswith("@uni.pe"):
-            raise ValueError("El correo debe ser @uni.pe")
+        if not email.endswith("@gmail.com"):
+            raise ValueError("El correo debe ser @@gmail.com")
         return email
 
 
