@@ -88,7 +88,7 @@ function reset_signup_modal() {
   pendingEmail = "";
   signupTitle.textContent = "Crear una cuenta";
   if (signupHint) {
-    signupHint.innerHTML = "El correo debe terminar en <b>@uni.pe</b>.";
+    signupHint.innerHTML = "El correo debe terminar en <b>@gmail.com</b>.";
   }
   otpHint.textContent = "";
 
@@ -100,18 +100,18 @@ function reset_signup_modal() {
   suOtp.value = "";
 }
 
-function show_otp_step(email, otpSimulado) {
+function show_otp_step(email) {
   pendingEmail = email;
   signupTitle.textContent = "Verificar correo";
   hide(stepForm);
   show(stepOtp);
   hide(btnCreateAccount);
   show(btnVerifyOtp);
-  otpHint.textContent = `OTP simulado: ${otpSimulado}`;
+  otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
 }
 
-function is_uni_email(email) {
-  return String(email || "").toLowerCase().endsWith("@uni.pe");
+function is_gmail(email) {
+  return String(email || "").toLowerCase().endsWith("@gmail.com");
 }
 
 // =========================
@@ -147,7 +147,7 @@ async function handle_create_account() {
 
     if (!first || !last) return toast("Completa nombres y apellidos");
     if (!email) return toast("Ingresa tu correo");
-    if (!is_uni_email(email)) return toast("El correo debe terminar en @uni.pe");
+    if (!is_gmail(email)) return toast("El correo debe terminar en @gmail.com");
     if (p1.length < 8) return toast("Contraseña mínima: 8 caracteres");
     if (p1 !== p2) return toast("Las contraseñas no coinciden");
     if (!okTerms) return toast("Acepta los términos");
@@ -169,9 +169,11 @@ async function handle_create_account() {
     const data = await res.json();
 
     if (!res.ok) return toast(data?.detail || "Error creando usuario");
-    if (!data.otp_simulado) return toast("No llegó OTP");
 
-    show_otp_step(email, data.otp_simulado);
+// ✅ OTP real: no viene en la respuesta. Solo pasamos a paso 2.
+    show_otp_step(email);
+    toast("Te enviamos un OTP a tu correo 📩");
+
 
   } catch (err) {
     console.error(err);

@@ -6,7 +6,7 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 EMAIL_SENDER = "TU_CORREO@gmail.com"
-EMAIL_PASSWORD = "TU_APP_PASSWORD"  # contraseña de aplicación
+EMAIL_PASSWORD = "tcwtqzninxbixhpd"  # contraseña de aplicación
 
 def send_otp_email(to_email: str, otp: str):
     subject = "Verificación CryptoLock"
