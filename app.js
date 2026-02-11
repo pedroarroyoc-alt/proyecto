@@ -19,10 +19,10 @@ const signupBackdrop = document.getElementById("signupBackdrop");
 const btnCloseSignup = document.getElementById("btnCloseSignup");
 const btnCreateAccount = document.getElementById("btnCreateAccount");
 const signupTitle = document.getElementById("signupTitle");
-const signupHint = document.getElementById("signupHint");
+const signupHint = document.getElementById("suHint");
 
-const stepForm = document.getElementById("signup-step-form");
-const stepOtp = document.getElementById("signup-step-otp");
+const stepForm = document.getElementById("signupStepForm");
+const stepOtp = document.getElementById("signupStepOtp");
 
 const suFirstName = document.getElementById("suFirstName");
 const suLastName = document.getElementById("suLastName");
@@ -87,11 +87,15 @@ function close_signup() {
 function reset_signup_modal() {
   pendingEmail = "";
   signupTitle.textContent = "Crear una cuenta";
-  signupHint.textContent = "";
+  if (signupHint) {
+    signupHint.innerHTML = "El correo debe terminar en <b>@uni.pe</b>.";
+  }
   otpHint.textContent = "";
 
   show(stepForm);
   hide(stepOtp);
+  show(btnCreateAccount);
+  hide(btnVerifyOtp);
 
   suOtp.value = "";
 }
@@ -101,6 +105,8 @@ function show_otp_step(email, otpSimulado) {
   signupTitle.textContent = "Verificar correo";
   hide(stepForm);
   show(stepOtp);
+  hide(btnCreateAccount);
+  show(btnVerifyOtp);
   otpHint.textContent = `OTP simulado: ${otpSimulado}`;
 }
 
@@ -130,7 +136,7 @@ function toast(msg) {
 // =========================
 async function handle_create_account() {
   try {
-    signupHint.textContent = "";
+    if (signupHint) signupHint.textContent = "";
 
     const first = suFirstName.value.trim();
     const last = suLastName.value.trim();
