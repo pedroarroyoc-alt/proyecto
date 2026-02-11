@@ -1,12 +1,24 @@
 import os
 import smtplib
-from email.utils import parseaddr
+import ssl
+from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import parseaddr
 
 class EmailDeliveryError(RuntimeError):
     """Error controlado para fallas de configuración o envío SMTP."""
 
+@dataclass(frozen=True)
+class SMTPConfig:
+    host: str
+    port: int
+    sender_header: str
+    envelope_from: str
+    login_user: str
+    password: str
+    use_ssl: bool
+    use_starttls: bool
 
 def _first_present_env(*keys: str) -> str:
     for key in keys:
@@ -16,10 +28,11 @@ def _first_present_env(*keys: str) -> str:
     return ""
 
 
-def _smtp_settings() -> tuple[str, int, str, str, str, bool]:
+def _smtp_settings() -> SMTPConfig:
     smtp_server = _first_present_env("SMTP_SERVER", "SMTP_HOST") or "smtp.gmail.com"
     smtp_port_raw = os.getenv("SMTP_PORT", "587").strip()
     smtp_tls = os.getenv("SMTP_TLS", "1").strip().lower() not in {"0", "false", "no"}
+    smtp_ssl = os.getenv("SMTP_SSL", "0").strip().lower() in {"1", "true", "yes"}
 
     # Compatibilidad con nombres de variables frecuentes en distintos entornos.
     smtp_sender = _first_present_env("SMTP_SENDER", "SMTP_USER", "EMAIL_USER", "GMAIL_USER")
@@ -58,11 +71,34 @@ def _smtp_settings() -> tuple[str, int, str, str, str, bool]:
             "SMTP user no configurado. Define SMTP_USER para la autenticación SMTP."
         )
 
-    return smtp_server, smtp_port, smtp_sender, login_user, smtp_password, smtp_tls
+    sender_address = parseaddr(smtp_sender)[1] or login_user
+    if not sender_address:
+        raise EmailDeliveryError(
+            "No se pudo determinar el remitente SMTP. Revisa SMTP_SENDER o SMTP_USER."
+        )
+
+    # Si el puerto es 465 suele requerir SMTP_SSL aunque no se haya indicado explícitamente.
+    if smtp_port == 465 and not smtp_ssl:
+        smtp_ssl = True
+
+    # STARTTLS y SMTP_SSL son excluyentes.
+    if smtp_ssl and smtp_tls:
+        smtp_tls = False
+
+    return SMTPConfig(
+        host=smtp_server,
+        port=smtp_port,
+        sender_header=smtp_sender,
+        envelope_from=sender_address,
+        login_user=login_user,
+        password=smtp_password,
+        use_ssl=smtp_ssl,
+        use_starttls=smtp_tls,
+    )
 
 
 def send_otp_email(to_email: str, otp: str) -> None:
-    smtp_server, smtp_port, smtp_sender, login_user, smtp_password, smtp_tls = _smtp_settings()
+    config = _smtp_settings()
 
     subject = "Verificación CryptoLock"
     body = f"""
@@ -76,17 +112,25 @@ def send_otp_email(to_email: str, otp: str) -> None:
     """
 
     msg = MIMEMultipart()
-    msg["From"] = smtp_sender
+    msg["From"] = config.sender_header
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=20) as server:
-            if smtp_tls:
-                server.starttls()
-            server.login(login_user, smtp_password)
-            server.sendmail(login_user, to_email, msg.as_string())
+        tls_context = ssl.create_default_context()
+        if config.use_ssl:
+            with smtplib.SMTP_SSL(config.host, config.port, context=tls_context, timeout=20) as server:
+                server.login(config.login_user, config.password)
+                server.sendmail(config.envelope_from, to_email, msg.as_string())
+        else:
+            with smtplib.SMTP(config.host, config.port, timeout=20) as server:
+                server.ehlo()
+                if config.use_starttls:
+                    server.starttls(context=tls_context)
+                    server.ehlo()
+                server.login(config.login_user, config.password)
+                server.sendmail(config.envelope_from, to_email, msg.as_string())
     except smtplib.SMTPException as exc:
         raise EmailDeliveryError(f"No se pudo enviar el correo OTP: {exc}") from exc
     except OSError as exc:
