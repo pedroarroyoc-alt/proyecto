@@ -51,6 +51,7 @@ class Usuario:
 class UsuarioHumano(Usuario):
     telefono: str = ""
     mfaHabilitado: bool = False
+    passwordHash: str = ""
 
     def verificarMFA(self) -> bool:
         return bool(self.mfaHabilitado)
