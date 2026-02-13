@@ -181,6 +181,24 @@ function toast(msg) {
   }, 1800);
 }
 
+
+  async function api_json(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `Error HTTP ${res.status}`);
+  return data;
+}
+
+function short_hash(value = "") {
+  return String(value).slice(0, 12) + "...";
+}
+
+function fmt_ts(value = "") {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+}
+
+
 // =========================
 // Crear cuenta (Paso 1)
 // =========================
@@ -278,16 +296,36 @@ async function handle_verify_otp() {
   }
 }
 
-// =========================
-// Dashboard (demo)
+// Dashboard
 // =========================
 function default_items() {
   const now = new Date().toISOString();
   return [
-    { id: "INB-1", view: "inbox", title: "Login verificado", subtitle: "OTP", status: "OK", createdAt: now, body: "Acceso verificado." }
+    {
+      id: "INB-1",
+      view: "inbox",
+      title: "Login verificado",
+      subtitle: "OTP",
+      status: "OK",
+      createdAt: now,
+      body: "Acceso verificado."
+    }
   ];
 }
 
+function normalize_block_to_item(block) {
+  const datos = block?.datos || {};
+  return {
+    id: `BLK-${block.indice}`,
+    view: "ledger",
+    title: `${datos.accion || "GENESIS"} #${block.indice}`,
+    subtitle: datos.usuarioId || datos.mensaje || "Sistema",
+    status: "OK",
+    createdAt: block.timestamp,
+    body: JSON.stringify(block, null, 2),
+    raw: block,
+  };
+}
 function load_items() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -301,14 +339,107 @@ function save_items(items) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
-function render() {
-  if (!listEl) return;
-  listEl.innerHTML = state.items.map(i => `<button class="list-item">${i.title}</button>`).join("");
+
+function current_items() {
+  const q = state.query.trim().toLowerCase();
+  const byView = state.items.filter(i => i.view === state.view);
+  if (!q) return byView;
+  return byView.filter(i => `${i.title} ${i.subtitle} ${i.body}`.toLowerCase().includes(q));
 }
 
-function go_to_dashboard() {
+function render_detail(item) {
+  if (!detailEl) return;
+  if (!item) {
+    detailEl.innerHTML = `
+      <div class="detail-empty">
+        <div class="big">📩</div>
+        <h2>Selecciona un evento</h2>
+        <p>Haz click en un elemento de la lista para ver el detalle.</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (item.view === "ledger" && item.raw) {
+    detailEl.innerHTML = `
+      <div class="detail-card">
+        <h2>Bloque #${item.raw.indice}</h2>
+        <p><b>Hash:</b> <code>${item.raw.hash}</code></p>
+        <p><b>Hash anterior:</b> <code>${item.raw.hash_anterior}</code></p>
+        <p><b>Nonce:</b> ${item.raw.nonce} | <b>Dificultad:</b> ${item.raw.dificultad}</p>
+        <p><b>Fecha:</b> ${fmt_ts(item.raw.timestamp)}</p>
+        <pre>${JSON.stringify(item.raw.datos, null, 2)}</pre>
+      </div>
+    `;
+    return;
+  }
+
+  detailEl.innerHTML = `
+    <div class="detail-card">
+      <h2>${item.title}</h2>
+      <p><b>Estado:</b> ${item.status}</p>
+      <p><b>Fecha:</b> ${fmt_ts(item.createdAt)}</p>
+      <pre>${item.body}</pre>
+    </div>
+  `;
+}
+
+function render() {
+  if (!listEl) return;
+  const rows = current_items();
+  listEl.innerHTML = rows.map(i => `
+    <button class="list-item" data-id="${i.id}">
+      <b>${i.title}</b><br />
+      <small>${i.subtitle || ""}</small>
+      <small>${fmt_ts(i.createdAt)}</small>
+    </button>
+  `).join("");
+
+  const selected = rows.find(i => i.id === state.selectedId) || rows[0] || null;
+  state.selectedId = selected?.id || null;
+  render_detail(selected);
+}
+
+async function refresh_blockchain_panel() {
+  try {
+    const [status, chain] = await Promise.all([
+      api_json('/audit/status'),
+      api_json('/audit/chain')
+    ]);
+
+    const ledgerBlocks = (chain?.cadena || []).map(normalize_block_to_item);
+    state.items = [
+      ...state.items.filter(i => i.view !== 'ledger'),
+      ...ledgerBlocks,
+    ];
+    save_items(state.items);
+
+    if (detailEl && state.view === 'ledger') {
+      detailEl.innerHTML = `
+        <div class="detail-card">
+          <h2>Estado blockchain</h2>
+          <p><b>Válida:</b> ${status.valida ? 'Sí ✅' : 'No ❌'}</p>
+          <p><b>Longitud:</b> ${status.longitud}</p>
+          <p><b>Dificultad:</b> ${status.dificultad}</p>
+          <p><b>Último hash:</b> <code>${ledgerBlocks.length ? short_hash(ledgerBlocks[ledgerBlocks.length - 1].raw.hash) : '-'}</code></p>
+        </div>
+      `;
+    }
+
+    return status;
+  } catch (err) {
+    console.error(err);
+    toast(`No se pudo cargar auditoría blockchain: ${err.message}`);
+    throw err;
+  }
+}
+
+async function go_to_dashboard() {
   hide(landing);
   show(dashboardApp);
+  state.view = 'ledger';
+  navItems.forEach(n => n.classList.toggle('active', n.dataset.view === state.view));
+  await refresh_blockchain_panel().catch(() => {});
   render();
 }
 
@@ -316,6 +447,7 @@ function go_to_landing() {
   show(landing);
   hide(dashboardApp);
 }
+
 function preload_login_identifier() {
   const saved = localStorage.getItem("cryptolock_last_login");
   if (saved && liEmail) {
@@ -456,6 +588,39 @@ loginOtpForm?.addEventListener("submit", async (e) => {
       submitBtn.textContent = "Verificar OTP";
     }
   }
+});
+
+navItems.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    state.view = btn.dataset.view || 'inbox';
+    state.selectedId = null;
+    navItems.forEach(n => n.classList.toggle('active', n === btn));
+    if (state.view === 'ledger') {
+      refresh_blockchain_panel().finally(render);
+      return;
+    }
+    render();
+  });
+});
+
+listEl?.addEventListener('click', (e) => {
+  const row = e.target.closest('[data-id]');
+  if (!row) return;
+  state.selectedId = row.dataset.id;
+  render();
+});
+
+searchEl?.addEventListener('input', () => {
+  state.query = searchEl.value || '';
+  render();
+});
+
+btnRefresh?.addEventListener('click', () => {
+  if (state.view === 'ledger') {
+    refresh_blockchain_panel().finally(render);
+    return;
+  }
+  render();
 });
 
 // Ir a crear cuenta desde login

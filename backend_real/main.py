@@ -38,6 +38,7 @@ class CryptoLockAppFactory:
         self._app.get("/health")(HealthController.health)
         self._app.include_router(users_router)
         self._app.include_router(auth_router)
+        self._app.include_router(audit_router)
         return self
 
     def build(self) -> FastAPI:
