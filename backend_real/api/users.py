@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 
 from domain.usuarios import UsuarioHumano
+from services.audit_service import get_audit_service
 from services.email_service import send_otp_email
 
 
@@ -113,6 +114,7 @@ class UserService:
     def __init__(self, repository: UserRepository, otp_manager: OtpManager) -> None:
         self._repository = repository
         self._otp_manager = otp_manager
+        self._audit = get_audit_service()
 
     def create_human_user(self, payload: CreateHumanUser) -> dict:
         email = str(payload.email).strip().lower()
@@ -129,6 +131,12 @@ class UserService:
         )
 
         self._repository.save(user)
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="USER_CREATED",
+            recurso="/users/human",
+            metadatos={"email": email, "mfa": payload.mfaHabilitado},
+        )
 
         otp = self._otp_manager.generate_for_email(email)
         email_sent = True
@@ -176,6 +184,12 @@ class UserService:
 
         user.marcar_email_verificado()
         self._otp_manager.clear(email)
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="EMAIL_VERIFIED",
+            recurso="/users/verify-email",
+            metadatos={"email": email},
+        )
 
         return {
             "user": self.to_public(user),

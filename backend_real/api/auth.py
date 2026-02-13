@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
 
 # reutiliza tu lógica actual (ajusta imports según tu proyecto)
+from services.audit_service import get_audit_service
 from services.email_service import EmailDeliveryError, send_otp_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -45,6 +46,7 @@ class OTPStoreService:
 class AuthService:
     def __init__(self, otp_store_service):
         self._otp_store_service = otp_store_service
+        self._audit = get_audit_service()
 
     def normalize_email(self, email):
         return email.lower().strip()
@@ -75,6 +77,13 @@ class AuthService:
             message = "No se pudo enviar el OTP por correo. Revisa la configuración SMTP."
             print(f"[WARN] No se pudo enviar OTP de login a {email}: {exc}")
 
+        self._audit.registrar_evento(
+            usuario_id=email,
+            accion="LOGIN_OTP_REQUESTED",
+            recurso="/auth/login/request-otp",
+            metadatos={"emailSent": email_sent},
+        )
+
         return self.build_request_otp_response(message, email_sent, otp)
 
     def verify_login_otp(self, payload):
@@ -93,7 +102,13 @@ class AuthService:
             raise HTTPException(status_code=400, detail="OTP inválido")
 
         self._otp_store_service.remove_for_email(email)
-
+        self._audit.registrar_evento(
+            usuario_id=email,
+            accion="LOGIN_VERIFIED",
+            recurso="/auth/login/verify-otp",
+            metadatos={"auth": "otp"},
+        )
+        
         # demo: “sesión” simple (luego reemplazas por JWT)
         return {"message": "Acceso verificado", "token": "demo-token", "user": {"email": email}}
 
