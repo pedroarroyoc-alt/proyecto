@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr
 # reutiliza tu lógica actual (ajusta imports según tu proyecto)
 from services.audit_service import get_audit_service
 from services.email_service import EmailDeliveryError, send_otp_email
+from api.users import password_hasher, user_repository
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -17,7 +18,7 @@ _otp_store = {}  # email -> {"otp": "...", "exp": datetime}
 
 class LoginRequest(BaseModel):
     email: EmailStr
-
+    password: str
 
 class LoginVerify(BaseModel):
     email: EmailStr
@@ -43,9 +44,12 @@ class OTPStoreService:
         self._otp_store.pop(email, None)
 
 
+
 class AuthService:
-    def __init__(self, otp_store_service):
+    def __init__(self, otp_store_service, users_repo, pwd_hasher):
         self._otp_store_service = otp_store_service
+        self._users_repo = users_repo
+        self._pwd_hasher = pwd_hasher
         self._audit = get_audit_service()
 
     def normalize_email(self, email):
@@ -65,6 +69,18 @@ class AuthService:
 
     def request_login_otp(self, payload):
         email = self.normalize_email(payload.email)
+        password = (payload.password or "").strip()
+
+        user = self._users_repo.get_by_email(email)
+        if not user:
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+        if not user.autenticar():
+            raise HTTPException(status_code=403, detail="Usuario no activo o correo no verificado")
+
+        if not self._pwd_hasher.verify_password(password, user.passwordHash):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        
         otp = self._otp_store_service.create_for_email(email)
 
         email_sent = True
@@ -108,7 +124,7 @@ class AuthService:
             recurso="/auth/login/verify-otp",
             metadatos={"auth": "otp"},
         )
-        
+
         # demo: “sesión” simple (luego reemplazas por JWT)
         return {"message": "Acceso verificado", "token": "demo-token", "user": {"email": email}}
 
@@ -125,7 +141,7 @@ class AuthController:
 
 
 otp_store_service = OTPStoreService(_otp_store)
-auth_service = AuthService(otp_store_service)
+auth_service = AuthService(otp_store_service, user_repository, password_hasher)
 auth_controller = AuthController(auth_service)
 
 router.add_api_route(

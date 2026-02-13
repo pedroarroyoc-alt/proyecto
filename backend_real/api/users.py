@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from services.email_service import send_otp_email
 class CreateHumanUser(BaseModel):
     email: EmailStr
     nombre: str
+    password: str
     telefono: Optional[str] = ""
     mfaHabilitado: bool = False
 
@@ -29,6 +31,14 @@ class CreateHumanUser(BaseModel):
         if not email.endswith("@gmail.com"):
             raise ValueError("El correo debe ser @@gmail.com")
         return email
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        pwd = (v or "").strip()
+        if len(pwd) < 8:
+            raise ValueError("La contraseña debe tener al menos 8 caracteres")
+        return pwd
 
 
 class VerifyEmailRequest(BaseModel):
@@ -110,10 +120,20 @@ class OtpManager:
 # =========================
 # Service (lógica negocio)
 # =========================
+class PasswordHasher:
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def verify_password(password: str, password_hash: str) -> bool:
+        return PasswordHasher.hash_password(password) == password_hash
+
 class UserService:
-    def __init__(self, repository: UserRepository, otp_manager: OtpManager) -> None:
+    def __init__(self, repository: UserRepository, otp_manager: OtpManager, password_hasher: PasswordHasher) -> None:
         self._repository = repository
         self._otp_manager = otp_manager
+        self._password_hasher = password_hasher
         self._audit = get_audit_service()
 
     def create_human_user(self, payload: CreateHumanUser) -> dict:
@@ -128,6 +148,7 @@ class UserService:
             nombre=payload.nombre,
             telefono=payload.telefono or "",
             mfaHabilitado=payload.mfaHabilitado,
+            passwordHash=self._password_hasher.hash_password(payload.password),
         )
 
         self._repository.save(user)
@@ -252,7 +273,8 @@ class UserController:
 # =========================
 user_repository = UserRepository()
 otp_manager = OtpManager()
-user_service = UserService(repository=user_repository, otp_manager=otp_manager)
+password_hasher = PasswordHasher()
+user_service = UserService(repository=user_repository, otp_manager=otp_manager, password_hasher=password_hasher)
 user_controller = UserController(service=user_service)
 
 router = user_controller.router

@@ -231,7 +231,8 @@ async function handle_create_account() {
         email,
         nombre: `${first} ${last}`,
         telefono: "",
-        mfaHabilitado: false
+        mfaHabilitado: false,
+        password: p1
       }),
     });
 
@@ -521,7 +522,7 @@ loginForm?.addEventListener("submit", async (e) => {
     const res = await fetch(`${API_BASE}/auth/login/request-otp`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: identifier.toLowerCase() }),
+      body: JSON.stringify({ email: identifier.toLowerCase(), password: pwd }),
     });
 
     const data = await res.json();
