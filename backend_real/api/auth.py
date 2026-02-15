@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 
 # reutiliza tu lógica actual (ajusta imports según tu proyecto)
+from api.users import password_hasher, user_repository
 from services.audit_service import get_audit_service
 from services.email_service import EmailDeliveryError, send_otp_email
 from services.security_service import otp_service, rate_limiter, token_service, totp_service
@@ -148,7 +149,7 @@ class AuthService:
 
             # fallback recovery code
             for hashed in list(getattr(user, "recoveryCodesHash", [])):
-                if password_hasher.verify_password(code, hashed):
+                if self._pwd_hasher.verify_password(code, hashed):
                     user.recoveryCodesHash.remove(hashed)
                     tokens = token_service.issue_tokens(email)
                     self._audit.registrar_evento(
