@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 
 from fastapi import FastAPI
@@ -25,12 +27,14 @@ class CryptoLockAppFactory:
         self._app = FastAPI(title="CryptoLock Backend", version="0.1.0")
 
     def configure_middleware(self) -> "CryptoLockAppFactory":
+        raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip()
+        allow_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
         self._app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=allow_origins,
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
         )
         return self
 

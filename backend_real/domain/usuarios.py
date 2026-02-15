@@ -62,6 +62,7 @@ class Usuario:
             "estado": self.estado.value,
             "emailVerificado": self.emailVerificado,
             "mfaHabilitado": bool(getattr(self, "mfaHabilitado", False)),
+            "mfaMetodo": getattr(self, "mfaMetodo", "none"),
             "fechaCreacion": self.fechaCreacion.isoformat(),
             "nivelConfianza": self.nivelConfianza,
             "nivelConfianzaDescripcion": self.descripcion_nivel_confianza(self.nivelConfianza),
@@ -73,6 +74,9 @@ class Usuario:
 class UsuarioHumano(Usuario):
     telefono: str = ""
     mfaHabilitado: bool = False
+    mfaMetodo: str = "none"
+    totpSecret: str = ""
+    recoveryCodesHash: List[str] = field(default_factory=list)
     passwordHash: str = ""
 
     def verificarMFA(self) -> bool:

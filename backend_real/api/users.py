@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from domain.usuarios import UsuarioHumano
 from services.audit_service import get_audit_service
 from services.email_service import send_otp_email
+from services.security_service import PasswordHasher, otp_service, totp_service
 
 
 # =========================
@@ -55,6 +55,14 @@ class EnableMfaRequest(BaseModel):
     mfaHabilitado: bool = True
 
 
+class ConfirmTotpEnrollmentRequest(BaseModel):
+    codigo: str
+
+
+class VerifyRecoveryCodeRequest(BaseModel):
+    codigo: str
+
+
 # =========================
 # Errores de dominio/servicio
 # =========================
@@ -94,45 +102,24 @@ class UserRepository:
 # =========================
 # OTP Manager (memoria)
 # =========================
-from datetime import datetime, timedelta
-
 class OtpManager:
-    def __init__(self):
-        self._pending_email_otp: Dict[str, tuple[str, datetime]] = {}
-
     def generate_for_email(self, email: str) -> str:
-        otp = f"{secrets.randbelow(1_000_000):06d}"
-        expiry = datetime.utcnow() + timedelta(minutes=5)
-        self._pending_email_otp[email.strip().lower()] = (otp, expiry)
-        return otp
+        return otp_service.create(email=email.strip().lower(), purpose="email_verification", ttl_seconds=300)
 
     def get_expected(self, email: str) -> Optional[str]:
-        record = self._pending_email_otp.get(email.strip().lower())
-        if not record:
-            return None
+        # El OTP ya no se guarda en claro para producción.
+        return None       
 
-        otp, expiry = record
-        if datetime.utcnow() > expiry:
-            self._pending_email_otp.pop(email.strip().lower(), None)
-            return None
-
-        return otp
+    def verify(self, email: str, otp: str) -> bool:
+        ok, _ = otp_service.verify(email=email.strip().lower(), purpose="email_verification", otp=otp)
+        return ok
 
     def clear(self, email: str) -> None:
-        self._pending_email_otp.pop(email.strip().lower(), None)
+        otp_service.clear(email=email.strip().lower(), purpose="email_verification")
 
 # =========================
 # Service (lógica negocio)
 # =========================
-class PasswordHasher:
-    @staticmethod
-    def hash_password(password: str) -> str:
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def verify_password(password: str, password_hash: str) -> bool:
-        return PasswordHasher.hash_password(password) == password_hash
-
 class UserService:
     def __init__(self, repository: UserRepository, otp_manager: OtpManager, password_hasher: PasswordHasher) -> None:
         self._repository = repository
@@ -193,14 +180,7 @@ class UserService:
         email = str(payload.email).strip().lower()
         otp = (payload.otp or "").strip()
 
-        expected = self._otp_manager.get_expected(email)
-        if not expected:
-            raise UserError(
-                message="No hay verificación pendiente para este email",
-                status_code=404,
-            )
-
-        if otp != expected:
+        if not self._otp_manager.verify(email, otp):
             raise UserError(message="OTP inválido", status_code=401)
 
         user = self._repository.get_by_email(email)
@@ -208,12 +188,6 @@ class UserService:
             raise UserError(message="Usuario no encontrado", status_code=404)
 
         user.marcar_email_verificado()
-                # Nivel de confianza:
-        # 0 = usuario registrado sin verificar
-        # 1 = email verificado por OTP
-        # 2 = email verificado + MFA habilitado
-        user.nivelConfianza = 1 + int(bool(user.mfaHabilitado))
-        self._otp_manager.clear(email)
         self._audit.registrar_evento(
             usuario_id=str(user.id),
             accion="EMAIL_VERIFIED",
@@ -245,7 +219,69 @@ class UserService:
             "user": self.to_public(user),
             "message": "Configuración MFA actualizada.",
         }
-    
+
+    def start_totp_enrollment(self, user_id: str) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        secret = totp_service.generate_secret()
+        user.totpSecret = secret
+        user.mfaMetodo = "totp_pending"
+        recovery_codes = [secrets.token_hex(4) for _ in range(8)]
+        user.recoveryCodesHash = [self._password_hasher.hash_password(code) for code in recovery_codes]
+
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="MFA_TOTP_ENROLLMENT_STARTED",
+            recurso=f"/users/{user_id}/mfa/totp/enroll",
+            metadatos={"method": "totp"},
+        )
+
+        return {
+            "message": "Escanea el QR/URI y confirma con un código TOTP.",
+            "otpauthUri": totp_service.provisioning_uri(email=user.email, secret=secret),
+            "secret": secret,
+            "recoveryCodes": recovery_codes,
+        }
+
+    def confirm_totp_enrollment(self, user_id: str, payload: ConfirmTotpEnrollmentRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+        if not user.totpSecret:
+            raise UserError(message="No hay enrolamiento TOTP pendiente", status_code=400)
+        if not totp_service.verify(secret=user.totpSecret, code=payload.codigo):
+            raise UserError(message="Código TOTP inválido", status_code=401)
+
+        user.mfaHabilitado = True
+        user.mfaMetodo = "totp"
+        user.actualizar_nivel_confianza()
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="MFA_TOTP_ENABLED",
+            recurso=f"/users/{user_id}/mfa/totp/confirm",
+            metadatos={"method": "totp"},
+        )
+        return {"message": "MFA TOTP habilitado", "user": self.to_public(user)}
+
+    def verify_recovery_code(self, user_id: str, payload: VerifyRecoveryCodeRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+        incoming = (payload.codigo or "").strip()
+        for hashed in list(getattr(user, "recoveryCodesHash", [])):
+            if self._password_hasher.verify_password(incoming, hashed):
+                user.recoveryCodesHash.remove(hashed)
+                self._audit.registrar_evento(
+                    usuario_id=str(user.id),
+                    accion="MFA_RECOVERY_CODE_USED",
+                    recurso=f"/users/{user_id}/mfa/recovery/verify",
+                    metadatos={"remainingCodes": len(user.recoveryCodesHash)},
+                )
+                return {"message": "Recovery code válido"}
+        raise UserError(message="Recovery code inválido", status_code=401)
+
     def list_users(self) -> List[dict]:
         return [self.to_public(u) for u in self._repository.list_all()]
 
@@ -278,6 +314,9 @@ class UserController:
         self.router.get("")(self.list_users)            # GET /users
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
         self.router.patch("/{user_id}/mfa")(self.update_user_mfa)  # PATCH /users/{id}/mfa
+        self.router.post("/{user_id}/mfa/totp/enroll")(self.start_totp_enrollment)
+        self.router.post("/{user_id}/mfa/totp/confirm")(self.confirm_totp_enrollment)
+        self.router.post("/{user_id}/mfa/recovery/verify")(self.verify_recovery_code)
 
     def create_human_user(self, payload: CreateHumanUser) -> dict:
         try:
@@ -296,7 +335,25 @@ class UserController:
             return self._service.update_user_mfa(user_id, payload)
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-        
+
+    def start_totp_enrollment(self, user_id: str) -> dict:
+        try:
+            return self._service.start_totp_enrollment(user_id)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def confirm_totp_enrollment(self, user_id: str, payload: ConfirmTotpEnrollmentRequest) -> dict:
+        try:
+            return self._service.confirm_totp_enrollment(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def verify_recovery_code(self, user_id: str, payload: VerifyRecoveryCodeRequest) -> dict:
+        try:
+            return self._service.verify_recovery_code(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+     
     def list_users(self) -> List[dict]:
         return self._service.list_users()
 
