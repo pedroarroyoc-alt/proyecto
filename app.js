@@ -97,10 +97,14 @@ let pendingLoginIdentifier = "";
 // Helpers UI
 // =========================
 function show(el) {
-  if (el) el.classList.remove("hidden");
+  if (!el) return;
+  el.classList.remove("hidden");
+  el.removeAttribute("aria-hidden");
 }
 function hide(el) {
-  if (el) el.classList.add("hidden");
+  if (!el) return;
+  el.classList.add("hidden");
+  el.setAttribute("aria-hidden", "true");
 }
 
 function open_signup() {
@@ -122,10 +126,13 @@ function open_login_otp(identifier) {
   if (liOtp) liOtp.value = "";
   hide(loginBackdrop);
   show(loginOtpBackdrop);
+  // Refuerzo por si alguna regla CSS externa pisa el display del backdrop.
+  if (loginOtpBackdrop) loginOtpBackdrop.style.display = "grid";
   setTimeout(() => liOtp?.focus(), 0);
 }
 
 function close_login_otp() {
+  if (loginOtpBackdrop) loginOtpBackdrop.style.display = "";
   hide(loginOtpBackdrop);
 }
 
@@ -163,6 +170,7 @@ function show_otp_step(email) {
   signupTitle.textContent = "Verificar correo";
   hide(stepForm);
   show(stepOtp);
+  if (stepOtp) stepOtp.style.display = "block";
   hide(btnCreateAccount);
   show(btnVerifyOtp);
   otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
