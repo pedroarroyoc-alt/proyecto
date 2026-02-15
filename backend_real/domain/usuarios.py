@@ -49,7 +49,7 @@ class Usuario:
     def descripcion_nivel_confianza(nivel: int) -> str:
         descripciones = {
             0: "No verificado",
-            1: "Email verificado por OTP",
+            1: "Email verificado por OTP (sin MFA)",
             2: "Email verificado + MFA habilitado",
         }
         return descripciones.get(nivel, "Nivel personalizado")
@@ -61,6 +61,7 @@ class Usuario:
             "nombre": self.nombre,
             "estado": self.estado.value,
             "emailVerificado": self.emailVerificado,
+            "mfaHabilitado": bool(getattr(self, "mfaHabilitado", False)),
             "fechaCreacion": self.fechaCreacion.isoformat(),
             "nivelConfianza": self.nivelConfianza,
             "nivelConfianzaDescripcion": self.descripcion_nivel_confianza(self.nivelConfianza),
