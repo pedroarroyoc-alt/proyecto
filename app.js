@@ -1,7 +1,19 @@
 // =========================
 // CONFIG
 // =========================
-const API_BASE = "http://127.0.0.1:8000";
+function resolveApiBase() {
+  const params = new URLSearchParams(window.location.search);
+  const explicitApiBase = params.get("api") || window.localStorage.getItem("api_base_override");
+
+  if (explicitApiBase) return explicitApiBase.replace(/\/$/, "");
+
+  const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
+  const host = isHttp ? window.location.hostname : "127.0.0.1";
+
+  return `http://${host}:8000`;
+}
+
+const API_BASE = resolveApiBase();
 
 // =========================
 // Referencias HTML
