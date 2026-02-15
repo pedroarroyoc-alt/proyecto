@@ -51,6 +51,10 @@ class VerifyEmailRequest(BaseModel):
         return str(v).strip().lower()
 
 
+class EnableMfaRequest(BaseModel):
+    mfaHabilitado: bool = True
+
+
 # =========================
 # Errores de dominio/servicio
 # =========================
@@ -222,6 +226,26 @@ class UserService:
             "message": "Correo verificado. Usuario ACTIVADO.",
         }
 
+    def update_user_mfa(self, user_id: str, payload: EnableMfaRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        user.mfaHabilitado = bool(payload.mfaHabilitado)
+        user.actualizar_nivel_confianza()
+
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="USER_MFA_UPDATED",
+            recurso=f"/users/{user_id}/mfa",
+            metadatos={"mfaHabilitado": user.mfaHabilitado},
+        )
+
+        return {
+            "user": self.to_public(user),
+            "message": "Configuración MFA actualizada.",
+        }
+    
     def list_users(self) -> List[dict]:
         return [self.to_public(u) for u in self._repository.list_all()]
 
@@ -253,6 +277,7 @@ class UserController:
         self.router.post("/verify-email")(self.verify_email)
         self.router.get("")(self.list_users)            # GET /users
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
+        self.router.patch("/{user_id}/mfa")(self.update_user_mfa)  # PATCH /users/{id}/mfa
 
     def create_human_user(self, payload: CreateHumanUser) -> dict:
         try:
@@ -266,6 +291,12 @@ class UserController:
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    def update_user_mfa(self, user_id: str, payload: EnableMfaRequest) -> dict:
+        try:
+            return self._service.update_user_mfa(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        
     def list_users(self) -> List[dict]:
         return self._service.list_users()
 
