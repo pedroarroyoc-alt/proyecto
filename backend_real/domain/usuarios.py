@@ -30,9 +30,29 @@ class Usuario:
         # Solo puede autenticarse si está activo y con email verificado
         return self.estado == EstadoUsuario.ACTIVO and self.emailVerificado is True
 
+    def actualizar_nivel_confianza(self) -> None:
+        # El nivel de confianza representa qué tan verificada está la identidad
+        # del usuario dentro de ESTE sistema (no del proveedor de correo).
+        if not self.emailVerificado:
+            self.nivelConfianza = 0
+            return
+
+        tiene_mfa = bool(getattr(self, "mfaHabilitado", False))
+        self.nivelConfianza = 2 if tiene_mfa else 1
+
     def marcar_email_verificado(self) -> None:
         self.emailVerificado = True
         self.estado = EstadoUsuario.ACTIVO
+        self.actualizar_nivel_confianza()
+
+    @staticmethod
+    def descripcion_nivel_confianza(nivel: int) -> str:
+        descripciones = {
+            0: "No verificado",
+            1: "Email verificado por OTP",
+            2: "Email verificado + MFA habilitado",
+        }
+        return descripciones.get(nivel, "Nivel personalizado")
 
     def obtenerPerfil(self) -> dict:
         return {
@@ -43,6 +63,7 @@ class Usuario:
             "emailVerificado": self.emailVerificado,
             "fechaCreacion": self.fechaCreacion.isoformat(),
             "nivelConfianza": self.nivelConfianza,
+            "nivelConfianzaDescripcion": self.descripcion_nivel_confianza(self.nivelConfianza),
             "tipo": self.__class__.__name__,
         }
 
