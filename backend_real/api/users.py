@@ -233,6 +233,9 @@ class UserService:
 
     @staticmethod
     def to_public(u: UsuarioHumano) -> dict:
+        # Recalcula el nivel para reflejar correctamente el estado actual
+        # incluso para usuarios creados antes de introducir esta regla.
+        u.actualizar_nivel_confianza()
         return u.obtenerPerfil()
 
 
