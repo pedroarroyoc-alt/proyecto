@@ -204,6 +204,11 @@ class UserService:
             raise UserError(message="Usuario no encontrado", status_code=404)
 
         user.marcar_email_verificado()
+                # Nivel de confianza:
+        # 0 = usuario registrado sin verificar
+        # 1 = email verificado por OTP
+        # 2 = email verificado + MFA habilitado
+        user.nivelConfianza = 1 + int(bool(user.mfaHabilitado))
         self._otp_manager.clear(email)
         self._audit.registrar_evento(
             usuario_id=str(user.id),
