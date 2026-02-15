@@ -27,11 +27,22 @@ class CryptoLockAppFactory:
         self._app = FastAPI(title="CryptoLock Backend", version="0.1.0")
 
     def configure_middleware(self) -> "CryptoLockAppFactory":
-        raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").strip()
+        raw_origins = os.getenv(
+            "CORS_ALLOW_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5500,http://127.0.0.1:5500",
+        ).strip()
         allow_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+        # Permite frontends locales servidos desde distintos puertos y también
+        # el caso en que el HTML se abre como archivo local (origin "null").
+        allow_origin_regex = os.getenv(
+            "CORS_ALLOW_ORIGIN_REGEX",
+            r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^null$",
+        )
         self._app.add_middleware(
             CORSMiddleware,
             allow_origins=allow_origins,
+            allow_origin_regex=allow_origin_regex,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
