@@ -151,36 +151,51 @@ function show_signup_error(message) {
   toast(message);
 }
  
+function set_button_loading(button, loadingText, idleText, isLoading) {
+  if (!button) return;
+  button.disabled = isLoading;
+  button.textContent = isLoading ? loadingText : idleText;
+}
+
+function set_otp_delivery_hint(targetEl, data, fallback) {
+  if (!targetEl) return;
+  targetEl.textContent = data?.emailSent === false
+    ? (data?.otpDebug
+        ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
+        : "No se pudo enviar correo. Solicita soporte para configurar SMTP.")
+    : fallback;
+}
 function reset_signup_modal() {
   pendingEmail = "";
   signupTitle.textContent = "Crear una cuenta";
-  set_signup_hint("El correo debe terminar en @gmail.com.");
-  otpHint.textContent = "";
+  if (signupTitle) signupTitle.textContent = "Crear una cuenta";
+  if (otpHint) otpHint.textContent = "";
+
 
   show(stepForm);
   hide(stepOtp);
   show(btnCreateAccount);
   hide(btnVerifyOtp);
 
-  suOtp.value = "";
+  if (suOtp) suOtp.value = "";
 }
 
 function show_otp_step(email) {
   pendingEmail = email;
-  signupTitle.textContent = "Verificar correo";
+  if (signupTitle) signupTitle.textContent = "Verificar correo";
   hide(stepForm);
   show(stepOtp);
   if (stepOtp) stepOtp.style.display = "block";
   hide(btnCreateAccount);
   show(btnVerifyOtp);
-  otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
+  if (otpHint) otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
 }
 
 function is_gmail(email) {
   return String(email || "").toLowerCase().endsWith("@gmail.com");
 }
 
-function looks_like_gamil_typo(email) {
+function looks_like_gmail_typo(email) {
   return String(email || "").toLowerCase().endsWith("@gamil.com");
 }
 
@@ -202,7 +217,7 @@ function toast(msg) {
 }
 
 
-  async function api_json(path, options = {}) {
+async function api_json(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || `Error HTTP ${res.status}`);
@@ -235,16 +250,15 @@ async function handle_create_account() {
 
     if (!first || !last) return show_signup_error("Completa nombres y apellidos");
     if (!email) return show_signup_error("Ingresa tu correo");
-    if (looks_like_gamil_typo(email)) return show_signup_error("Parece que escribiste @gamil.com. Debe ser @gmail.com");
+    if (looks_like_gmail_typo(email)) return show_signup_error("Parece que escribiste @gamil.com. Debe ser @gmail.com");
     if (!is_gmail(email)) return show_signup_error("El correo debe terminar en @gmail.com");
     if (p1.length < 8) return show_signup_error("Contraseña mínima: 8 caracteres");
     if (p1 !== p2) return show_signup_error("Las contraseñas no coinciden");
     if (!okTerms) return show_signup_error("Acepta los términos");
 
-    btnCreateAccount.disabled = true;
-    btnCreateAccount.textContent = "Creando...";
+    set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
-    const res = await fetch(`${API_BASE}/users/human`, {
+    const data = await api_json('/users/human', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -256,19 +270,11 @@ async function handle_create_account() {
       }),
     });
 
-    const data = await res.json();
-
-    if (!res.ok) return show_signup_error(data?.detail || "Error creando usuario");
-
 // ✅ OTP real: no viene en la respuesta. Solo pasamos a paso 2.
     show_otp_step(email);
-        if (data?.emailSent === false) {
-          otpHint.textContent = data?.otpDebug
-            ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
-            : "No se pudo enviar correo. Solicita soporte para configurar SMTP.";
-        }
+    set_otp_delivery_hint(otpHint, data, "Revisa tu correo y pega aquí el código OTP.");
 
-        toast(data?.message || "Te enviamos un OTP a tu correo 📩");
+    toast(data?.message || "Te enviamos un OTP a tu correo 📩");
 
 
   } catch (err) {
@@ -278,8 +284,7 @@ async function handle_create_account() {
       : "Error de red o servidor";
     show_signup_error(msg);
   } finally {
-    btnCreateAccount.disabled = false;
-    btnCreateAccount.textContent = "Crear cuenta";
+    set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
   }
 }
 
@@ -292,18 +297,13 @@ async function handle_verify_otp() {
     if (!pendingEmail) return toast("No hay correo pendiente");
     if (!otp) return toast("Ingresa el OTP");
 
-    btnVerifyOtp.disabled = true;
-    btnVerifyOtp.textContent = "Verificando...";
+    set_button_loading(btnVerifyOtp, "Verificando...", "Verificar", true);
 
-    const res = await fetch(`${API_BASE}/users/verify-email`, {
+    await api_json('/users/verify-email', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: pendingEmail, otp }),
     });
-
-    const data = await res.json();
-
-    if (!res.ok) return toast(data?.detail || "OTP inválido");
 
     toast("Cuenta activada ✅");
     close_signup();
@@ -312,8 +312,7 @@ async function handle_verify_otp() {
     console.error(err);
     toast("Error de red");
   } finally {
-    btnVerifyOtp.disabled = false;
-    btnVerifyOtp.textContent = "Verificar";
+    set_button_loading(btnVerifyOtp, "Verificando...", "Verificar", false);
   }
 }
 
@@ -514,55 +513,41 @@ function valid_login_identifier(value) {
 // Submit (paso 1): validar y pedir OTP
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const identifier = liEmail?.value?.trim() || "";
+  const loginIdentifier = liEmail?.value?.trim() || "";
   const pwd = liPassword?.value || "";
 
-  if (!identifier) return toast("Ingresa tu correo o teléfono");
-  if (!valid_login_identifier(identifier)) return toast("Formato inválido: usa correo o teléfono");
+  if (!loginIdentifier) return toast("Ingresa tu correo o teléfono");
+  if (!valid_login_identifier(loginIdentifier)) return toast("Formato inválido: usa correo o teléfono");
   if (!pwd) return toast("Ingresa tu contraseña");
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(identifier)) {
+  if (!emailRegex.test(loginIdentifier)) {
     return toast("Por ahora el login OTP solo admite correo electrónico");
   }
 
   if (liRemember?.checked) {
-    localStorage.setItem("cryptolock_last_login", identifier);
+    localStorage.setItem("cryptolock_last_login", loginIdentifier);
   } else {
     localStorage.removeItem("cryptolock_last_login");
   }
 
   const submitBtn = loginForm.querySelector('button[type="submit"]');
-  if (submitBtn) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = "Enviando OTP...";
-  }
+  set_button_loading(submitBtn, "Enviando OTP...", "Ingresar", true);
 
   try {
-    const res = await fetch(`${API_BASE}/auth/login/request-otp`, {
+    const data = await api_json('/auth/login/request-otp', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: identifier.toLowerCase(), password: pwd }),
+      body: JSON.stringify({ email: loginIdentifier.toLowerCase(), password: pwd }),
     });
-
-    const data = await res.json();
-    if (!res.ok) {
-      return toast(data?.detail || "No se pudo enviar el OTP");
-    }
 
     if (data?.requiresEmailVerification) {
       toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
       close_login();
       open_signup();
-      if (suEmail) suEmail.value = identifier.toLowerCase();
-      show_otp_step(identifier.toLowerCase());
-      if (otpHint) {
-        otpHint.textContent = data?.emailSent === false
-          ? (data?.otpDebug
-              ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
-              : "No se pudo enviar correo. Solicita soporte para configurar SMTP.")
-          : "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP.";
-      }
+      if (suEmail) suEmail.value = loginIdentifier.toLowerCase();
+      show_otp_step(loginIdentifier.toLowerCase());
+      set_otp_delivery_hint(otpHint, data, "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP.");
       return;
     }
 
@@ -573,15 +558,12 @@ loginForm?.addEventListener("submit", async (e) => {
       toast(data?.message || "OTP enviado. Revisa tu correo 📩");
     }
 
-    open_login_otp(identifier.toLowerCase());
+    open_login_otp(loginIdentifier.toLowerCase());
   } catch (err) {
     console.error(err);
-    toast(`No se pudo conectar con el backend (${API_BASE})`);
+    toast(err?.message || `No se pudo conectar con el backend (${API_BASE})`);
   } finally {
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = "Ingresar";
-    }
+    set_button_loading(submitBtn, "Enviando OTP...", "Ingresar", false);
   }
 });
 
@@ -595,22 +577,14 @@ loginOtpForm?.addEventListener("submit", async (e) => {
 
 
   const submitBtn = loginOtpForm.querySelector('button[type="submit"]');
-  if (submitBtn) {
-    submitBtn.disabled = true;
-    submitBtn.textContent = "Verificando...";
-  }
+  set_button_loading(submitBtn, "Verificando...", "Verificar OTP", true);
 
   try {
-    const res = await fetch(`${API_BASE}/auth/login/verify-otp`, {
+    const data = await api_json('/auth/login/verify-otp', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: pendingLoginIdentifier, otp }),
     });
-
-    const data = await res.json();
-    if (!res.ok) {
-      return toast(data?.detail || "OTP inválido");
-    }
 
     toast(data?.message || "Acceso verificado ✅");
     close_login_otp();
@@ -618,12 +592,9 @@ loginOtpForm?.addEventListener("submit", async (e) => {
     go_to_dashboard();
   } catch (err) {
     console.error(err);
-    toast(`No se pudo conectar con el backend (${API_BASE})`);
+    toast(err?.message || `No se pudo conectar con el backend (${API_BASE})`);
   } finally {
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = "Verificar OTP";
-    }
+    set_button_loading(submitBtn, "Verificando...", "Verificar OTP", false);
   }
 });
 
