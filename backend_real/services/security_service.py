@@ -79,7 +79,13 @@ class SecurityDataStore:
         if self._db_path.exists():
             timestamp = int(time.time())
             backup = self._db_path.with_suffix(f".corrupted.{timestamp}.sqlite3")
-            self._db_path.replace(backup)
+            try:
+                self._db_path.replace(backup)
+            except PermissionError:
+                # On Windows the file can remain locked by another process/thread
+                # (for example, the uvicorn reloader). Fall back to a fresh DB file
+                # so startup can recover without crashing.
+                self._db_path = self._db_path.with_suffix(f".recovered.{timestamp}.sqlite3")
 
     @staticmethod
     def _now_ts() -> int:
