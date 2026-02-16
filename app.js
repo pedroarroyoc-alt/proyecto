@@ -167,7 +167,6 @@ function set_otp_delivery_hint(targetEl, data, fallback) {
 }
 function reset_signup_modal() {
   pendingEmail = "";
-  signupTitle.textContent = "Crear una cuenta";
   if (signupTitle) signupTitle.textContent = "Crear una cuenta";
   if (otpHint) otpHint.textContent = "";
 
@@ -279,10 +278,7 @@ async function handle_create_account() {
 
   } catch (err) {
     console.error(err);
-    const msg = err instanceof TypeError
-      ? `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`
-      : "Error de red o servidor";
-    show_signup_error(msg);
+    show_signup_error(err?.message || `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`);
   } finally {
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
   }
@@ -310,7 +306,7 @@ async function handle_verify_otp() {
 
   } catch (err) {
     console.error(err);
-    toast("Error de red");
+    toast(err?.message || "Error de red");
   } finally {
     set_button_loading(btnVerifyOtp, "Verificando...", "Verificar", false);
   }
@@ -483,7 +479,10 @@ btnSignup?.addEventListener("click", open_signup);
 btnCloseSignup?.addEventListener("click", close_signup);
 signupBackdrop?.addEventListener("click", e => e.target === signupBackdrop && close_signup());
 
-btnCreateAccount?.addEventListener("click", handle_create_account);
+btnCreateAccount?.addEventListener("click", (e) => {
+  e.preventDefault();
+  handle_create_account();
+});
 btnVerifyOtp?.addEventListener("click", handle_verify_otp);
 
 btnEnter?.addEventListener("click", open_login);
@@ -632,7 +631,8 @@ btnRefresh?.addEventListener('click', () => {
 });
 
 // Ir a crear cuenta desde login
-btnGoSignup?.addEventListener("click", () => {
+btnGoSignup?.addEventListener("click", (e) => {
+  e.preventDefault();
   close_login();
   open_signup();
 });
