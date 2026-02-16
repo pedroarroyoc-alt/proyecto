@@ -131,8 +131,34 @@ class UserService:
         email = str(payload.email).strip().lower()
 
         # Evitar duplicados por email (igual que tu for en USERS.values())
-        if self._repository.get_by_email(email):
-            raise UserError(message="Ya existe un usuario con ese email", status_code=409)
+        existing_user = self._repository.get_by_email(email)
+        if existing_user:
+            if existing_user.emailVerificado:
+                raise UserError(message="Ya existe un usuario con ese email", status_code=409)
+
+            otp = self._otp_manager.generate_for_email(email)
+            email_sent = True
+            message = "Esta cuenta ya existe, pero aún no está verificada. Te reenviamos un OTP."
+            try:
+                send_otp_email(email, otp)
+            except Exception as exc:
+                email_sent = False
+                message = (
+                    "La cuenta existe y sigue pendiente de verificación, "
+                    "pero no se pudo enviar el OTP por correo."
+                )
+                print(f"[WARN] No se pudo reenviar OTP a {email}: {exc}")
+
+            response = {
+                "user": self.to_public(existing_user),
+                "message": message,
+                "emailSent": email_sent,
+                "alreadyExists": True,
+                "requiresEmailVerification": True,
+            }
+            if not email_sent and os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true":
+                response["otpDebug"] = otp
+            return response
 
         user = UsuarioHumano(
             email=email,

@@ -550,6 +550,22 @@ loginForm?.addEventListener("submit", async (e) => {
       return toast(data?.detail || "No se pudo enviar el OTP");
     }
 
+    if (data?.requiresEmailVerification) {
+      toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
+      close_login();
+      open_signup();
+      if (suEmail) suEmail.value = identifier.toLowerCase();
+      show_otp_step(identifier.toLowerCase());
+      if (otpHint) {
+        otpHint.textContent = data?.emailSent === false
+          ? (data?.otpDebug
+              ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
+              : "No se pudo enviar correo. Solicita soporte para configurar SMTP.")
+          : "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP.";
+      }
+      return;
+    }
+
     if (data?.emailSent === false) {
       const debugOtp = data?.otpDebug ? ` OTP de prueba: ${data.otpDebug}` : "";
       toast(`${data?.message || "No se pudo enviar el correo OTP."}${debugOtp}`);

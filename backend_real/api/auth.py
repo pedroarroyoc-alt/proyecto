@@ -74,7 +74,36 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
         if not user.autenticar():
-            raise HTTPException(status_code=403, detail="Usuario no activo o correo no verificado")
+            if not bool(getattr(user, "emailVerificado", False)):
+                otp = otp_service.create(email=email, purpose="email_verification", ttl_seconds=300)
+                email_sent = True
+                response = {
+                    "message": "Tu cuenta existe pero falta verificar el correo. Te enviamos un OTP de verificación.",
+                    "mfaRequired": False,
+                    "mfaMethod": getattr(user, "mfaMetodo", "none"),
+                    "emailSecondFactorRequired": False,
+                    "requiresEmailVerification": True,
+                }
+                try:
+                    send_otp_email(email, otp)
+                except EmailDeliveryError as exc:
+                    email_sent = False
+                    response["message"] = "Tu cuenta no está verificada y no se pudo enviar el OTP por correo"
+                    print(f"[WARN] No se pudo enviar OTP de verificación a {email}: {exc}")
+
+                response["emailSent"] = email_sent
+                if not email_sent and self._expose_debug_otp():
+                    response["otpDebug"] = otp
+
+                self._audit.registrar_evento(
+                    usuario_id=email,
+                    accion="LOGIN_EMAIL_VERIFICATION_OTP_REQUESTED",
+                    recurso="/auth/login/request-otp",
+                    metadatos={"emailSent": email_sent},
+                )
+                return response
+
+            raise HTTPException(status_code=403, detail="Usuario no activo")
 
         if not self._pwd_hasher.verify_password(password, user.passwordHash):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
