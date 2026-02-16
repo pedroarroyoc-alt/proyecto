@@ -219,7 +219,13 @@ function toast(msg) {
 async function api_json(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.detail || `Error HTTP ${res.status}`);
+  if (!res.ok) {
+    const rawDetail = data?.detail;
+    const detail = Array.isArray(rawDetail)
+      ? rawDetail.map(item => item?.msg || item).join(" | ")
+      : rawDetail;
+    throw new Error(detail || `Error HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -484,6 +490,22 @@ btnCreateAccount?.addEventListener("click", (e) => {
   handle_create_account();
 });
 btnVerifyOtp?.addEventListener("click", handle_verify_otp);
+
+// Permite enviar con Enter en los campos de registro.
+[suFirstName, suLastName, suEmail, suPassword, suPassword2, suTerms].forEach((field) => {
+  field?.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    handle_create_account();
+  });
+});
+
+// Permite verificar OTP con Enter.
+suOtp?.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  handle_verify_otp();
+});
 
 btnEnter?.addEventListener("click", open_login);
 
