@@ -29,6 +29,15 @@ class SecurityDataStore:
         return conn
 
     def _init_db(self) -> None:
+        try:
+            self._create_schema()
+        except sqlite3.DatabaseError as exc:
+            if "malformed" not in str(exc).lower():
+                raise
+            self._backup_and_recreate_corrupted_db()
+            self._create_schema()
+
+    def _create_schema(self) -> None:
         with self._conn() as conn:
             conn.execute(
                 """
@@ -65,6 +74,12 @@ class SecurityDataStore:
                 )
                 """
             )
+
+    def _backup_and_recreate_corrupted_db(self) -> None:
+        if self._db_path.exists():
+            timestamp = int(time.time())
+            backup = self._db_path.with_suffix(f".corrupted.{timestamp}.sqlite3")
+            self._db_path.replace(backup)
 
     @staticmethod
     def _now_ts() -> int:
