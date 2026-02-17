@@ -166,7 +166,6 @@ class UserRepository:
     def _persist(self) -> None:
         payload = {"users": [self._serialize_user(u) for u in self._users.values()]}
         self._file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._users: Dict[str, UsuarioHumano] = {}
 
     def save(self, user: UsuarioHumano) -> UsuarioHumano:
         self._users[str(user.id)] = user
