@@ -210,6 +210,7 @@ function reset_signup_modal() {
   hide(btnVerifyOtp);
 
   if (suOtp) suOtp.value = "";
+  if (suTerms) suTerms.checked = true;
 }
 
 function show_otp_step(email) {
@@ -308,7 +309,7 @@ async function handle_create_account() {
     if (!is_gmail(email)) return show_signup_error("El correo debe terminar en @gmail.com");
     if (p1.length < 8) return show_signup_error("Contraseña mínima: 8 caracteres");
     if (p1 !== p2) return show_signup_error("Las contraseñas no coinciden");
-    if (!okTerms) return show_signup_error("Acepta los términos");
+    if (!okTerms) return show_signup_error("Debes aceptar los términos para continuar con la verificación por correo");
 
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
