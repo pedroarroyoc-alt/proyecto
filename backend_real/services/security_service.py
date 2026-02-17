@@ -352,7 +352,7 @@ class TotpService:
         code_int = (struct.unpack(">I", hmac_digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
         return f"{code_int:0{digits}d}"
 
-    def verify(self, *, secret: str, code: str, drift_windows: int = 1) -> bool:
+    def verify(self, *, secret: str, code: str, drift_windows: int = 2) -> bool:
         timestep = int(time.time() // 30)
         normalized = (code or "").strip()
         for delta in range(-drift_windows, drift_windows + 1):
