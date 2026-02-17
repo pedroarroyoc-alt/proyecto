@@ -46,6 +46,7 @@ const suTerms = document.getElementById("suTerms");
 
 const suOtp = document.getElementById("suOtp");
 const btnVerifyOtp = document.getElementById("btnVerifyOtp");
+const btnResendSignupOtp = document.getElementById("btnResendSignupOtp");
 const otpHint = document.getElementById("otpHint");
 
 /* ===== Modal Acceder (Login) ===== */
@@ -208,6 +209,7 @@ function reset_signup_modal() {
   hide(stepOtp);
   show(btnCreateAccount);
   hide(btnVerifyOtp);
+  hide(btnResendSignupOtp);
 
   if (suOtp) suOtp.value = "";
   if (suTerms) suTerms.checked = true;
@@ -223,6 +225,7 @@ function show_otp_step(email) {
   if (stepOtp) stepOtp.style.display = "block";
   hide(btnCreateAccount);
   show(btnVerifyOtp);
+  show(btnResendSignupOtp);
   if (otpHint) otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
   setTimeout(() => suOtp?.focus(), 0);
 }
@@ -341,10 +344,12 @@ async function handle_create_account() {
     const requiresEmailVerification = Boolean(
       err?.payload?.requiresEmailVerification ?? err?.payload?.requires_email_verification
     );
+    const backendMessage = String(err?.payload?.message || err?.message || "").toLowerCase();
+    const messageSuggestsPendingVerification = backendMessage.includes("verific") && backendMessage.includes("correo");
 
     // Compatibilidad: algunos backends responden con 4xx pero igualmente
     // indican que la cuenta está pendiente de verificación.
-    if (requiresEmailVerification && signupEmail) {
+    if ((requiresEmailVerification || messageSuggestsPendingVerification) && signupEmail) {
       show_otp_step(signupEmail);
       set_otp_delivery_hint(
         otpHint,
@@ -380,6 +385,30 @@ async function handle_create_account() {
 // =========================
 // Verificar OTP (Paso 2)
 // =========================
+async function handle_resend_signup_otp() {
+  try {
+    const email = (pendingEmail || suEmail?.value || "").trim().toLowerCase();
+    if (!email) return toast("No hay correo para reenviar OTP");
+
+    set_button_loading(btnResendSignupOtp, "Reenviando...", "Reenviar OTP", true);
+
+    const data = await api_json('/users/resend-verification-otp', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    pendingEmail = email;
+    set_otp_delivery_hint(otpHint, data, "Te reenviamos el OTP. Revisa tu correo.");
+    toast(data?.message || "Te reenviamos el OTP 📩");
+  } catch (err) {
+    console.error(err);
+    toast(humanize_error(err, "No se pudo reenviar el OTP"));
+  } finally {
+    set_button_loading(btnResendSignupOtp, "Reenviando...", "Reenviar OTP", false);
+  }
+}
+
 async function handle_verify_otp() {
   try {
     const otp = suOtp.value.trim();
@@ -744,6 +773,7 @@ loginForm?.addEventListener("submit", async (e) => {
   if (!loginIdentifier) return toast("Ingresa tu correo o teléfono");
   if (!valid_login_identifier(loginIdentifier)) return toast("Formato inválido: usa correo o teléfono");
   if (!pwd) return toast("Ingresa tu contraseña");
+  btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(loginIdentifier)) {

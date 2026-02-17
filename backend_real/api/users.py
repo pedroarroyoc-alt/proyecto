@@ -29,7 +29,7 @@ class CreateHumanUser(BaseModel):
     def only_uni_pe(cls, v: EmailStr) -> str:
         email = str(v).strip().lower()
         if not email.endswith("@gmail.com"):
-            raise ValueError("El correo debe ser @@gmail.com")
+            raise ValueError("El correo debe ser @gmail.com")
         return email
 
     @field_validator("password")
