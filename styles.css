@@ -163,6 +163,28 @@ body {
 }
 .kv-row div:first-child { color: #555; font-weight: 700; }
 
+.totp-qr {
+  width: 220px;
+  height: 220px;
+  border: 1px solid #e7eaf0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.totp-confirm-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.totp-confirm-row input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #e7eaf0;
+  min-width: 180px;
+}
+
 .hidden { display: none; }
 
 .modal-backdrop {

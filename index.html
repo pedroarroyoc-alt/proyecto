@@ -76,6 +76,7 @@
         <button class="nav-item active" data-view="inbox">📥 Bandeja (Eventos)</button>
         <button class="nav-item" data-view="vault">🗝️ Bóveda de llaves</button>
         <button class="nav-item" data-view="methods">✅ Métodos</button>
+        <button class="nav-item" data-view="security">🔐 Seguridad (MFA)</button>
         <button class="nav-item" data-view="ledger">⛓️ Blockchain</button>
       </nav>
 
@@ -245,14 +246,14 @@
       <div class="modal-head">
         <div>
           <h2 id="loginOtpTitle">Verificación de acceso</h2>
-          <p class="muted">Ingresa el código OTP para completar el ingreso.</p>
+          <p class="muted" id="loginOtpHint">Ingresa el código OTP para completar el ingreso.</p>
         </div>
         <button class="icon-btn" id="btnCloseLoginOtp" aria-label="Cerrar">✕</button>
       </div>
 
       <form class="form" id="loginOtpForm">
         <label class="field">
-          <span>Código OTP</span>
+          <span id="loginOtpLabel">Código OTP</span>
           <input id="liOtp" type="text" inputmode="numeric" placeholder="Ej: 123456" required />
         </label>
 

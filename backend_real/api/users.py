@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query 
 from pydantic import BaseModel, EmailStr, field_validator
 
 from domain.usuarios import UsuarioHumano
@@ -338,6 +338,7 @@ class UserController:
         self.router.post("/human")(self.create_human_user)
         self.router.post("/verify-email")(self.verify_email)
         self.router.get("")(self.list_users)            # GET /users
+        self.router.get("/by-email")(self.get_user_by_email)  # GET /users/by-email?email=
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
         self.router.patch("/{user_id}/mfa")(self.update_user_mfa)  # PATCH /users/{id}/mfa
         self.router.post("/{user_id}/mfa/totp/enroll")(self.start_totp_enrollment)
@@ -389,6 +390,11 @@ class UserController:
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    def get_user_by_email(self, email: EmailStr = Query(...)) -> dict:
+        user = self._service._repository.get_by_email(str(email).strip().lower())
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        return self._service.to_public(user)
 
 # =========================
 # Wiring (instancias)
