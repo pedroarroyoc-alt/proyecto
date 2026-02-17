@@ -337,6 +337,24 @@ async function handle_create_account() {
 
   } catch (err) {
     console.error(err);
+    const signupEmail = suEmail.value.trim().toLowerCase();
+    const requiresEmailVerification = Boolean(
+      err?.payload?.requiresEmailVerification ?? err?.payload?.requires_email_verification
+    );
+
+    // Compatibilidad: algunos backends responden con 4xx pero igualmente
+    // indican que la cuenta está pendiente de verificación.
+    if (requiresEmailVerification && signupEmail) {
+      show_otp_step(signupEmail);
+      set_otp_delivery_hint(
+        otpHint,
+        err?.payload,
+        "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP."
+      );
+      toast(err?.payload?.message || "Te enviamos un OTP de verificación 📩");
+      return;
+    }
+
     if (err?.status === 409) {
       try {
         set_signup_hint("La cuenta ya existe. Reenviando OTP...");
