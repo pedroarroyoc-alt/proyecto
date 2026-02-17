@@ -261,7 +261,10 @@ async function api_json(path, options = {}) {
     const detail = Array.isArray(rawDetail)
       ? rawDetail.map(item => item?.msg || item).join(" | ")
       : rawDetail;
-    throw new Error(detail || `Error HTTP ${res.status}`);
+    const error = new Error(detail || `Error HTTP ${res.status}`);
+    error.status = res.status;
+    error.payload = data;
+    throw error;
   }
   return data;
 }
@@ -334,6 +337,22 @@ async function handle_create_account() {
 
   } catch (err) {
     console.error(err);
+    if (err?.status === 409) {
+      try {
+        set_signup_hint("La cuenta ya existe. Reenviando OTP...");
+        const resendData = await api_json('/users/resend-verification-otp', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: suEmail.value.trim().toLowerCase() }),
+        });
+        show_otp_step(suEmail.value.trim().toLowerCase());
+        set_otp_delivery_hint(otpHint, resendData, "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP.");
+        toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
+        return;
+      } catch (resendErr) {
+        console.error(resendErr);
+      }
+    }
     show_signup_error(humanize_error(err, `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`));
   } finally {
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);

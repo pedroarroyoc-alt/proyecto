@@ -51,6 +51,15 @@ class VerifyEmailRequest(BaseModel):
         return str(v).strip().lower()
 
 
+class ResendVerificationOtpRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+
 class EnableMfaRequest(BaseModel):
     mfaHabilitado: bool = True
 
@@ -226,6 +235,35 @@ class UserService:
             "message": "Correo verificado. Usuario ACTIVADO.",
         }
 
+    def resend_verification_otp(self, payload: ResendVerificationOtpRequest) -> dict:
+        email = str(payload.email).strip().lower()
+        user = self._repository.get_by_email(email)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+        if bool(user.emailVerificado):
+            raise UserError(message="La cuenta ya está verificada", status_code=409)
+
+        otp = self._otp_manager.generate_for_email(email)
+        email_sent = True
+        message = "Te reenviamos el OTP de verificación."
+
+        try:
+            send_otp_email(email, otp)
+        except Exception as exc:
+            email_sent = False
+            message = "No se pudo enviar el OTP por correo. Verifica la configuración SMTP."
+            print(f"[WARN] No se pudo reenviar OTP a {email}: {exc}")
+
+        response = {
+            "user": self.to_public(user),
+            "message": message,
+            "emailSent": email_sent,
+            "requiresEmailVerification": True,
+        }
+        if not email_sent and os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true":
+            response["otpDebug"] = otp
+        return response
+    
     def update_user_mfa(self, user_id: str, payload: EnableMfaRequest) -> dict:
         user = self._repository.get_by_id(user_id)
         if not user:
@@ -337,6 +375,7 @@ class UserController:
     def _register_routes(self) -> None:
         self.router.post("/human")(self.create_human_user)
         self.router.post("/verify-email")(self.verify_email)
+        self.router.post("/resend-verification-otp")(self.resend_verification_otp)
         self.router.get("")(self.list_users)            # GET /users
         self.router.get("/by-email")(self.get_user_by_email)  # GET /users/by-email?email=
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
@@ -357,6 +396,12 @@ class UserController:
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    def resend_verification_otp(self, payload: ResendVerificationOtpRequest) -> dict:
+        try:
+            return self._service.resend_verification_otp(payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    
     def update_user_mfa(self, user_id: str, payload: EnableMfaRequest) -> dict:
         try:
             return self._service.update_user_mfa(user_id, payload)
