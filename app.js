@@ -62,7 +62,7 @@ const btnCloseLoginOtp = document.getElementById("btnCloseLoginOtp");
 const loginOtpForm = document.getElementById("loginOtpForm");
 const liOtp = document.getElementById("liOtp");
 const loginOtpHint = document.getElementById("loginOtpHint");
-const loginOtpLabel = document.getElementById("loginOtpLabel");4
+const loginOtpLabel = document.getElementById("loginOtpLabel");
 const loginTotpGuide = document.getElementById("loginTotpGuide");
 const loginTotpQr = document.getElementById("loginTotpQr");
 const loginTotpSecret = document.getElementById("loginTotpSecret");
@@ -728,7 +728,13 @@ loginForm?.addEventListener("submit", async (e) => {
       body: JSON.stringify({ email: loginIdentifier.toLowerCase(), password: pwd }),
     });
 
-    if (data?.requiresEmailVerification) {
+    const requiresEmailVerification = Boolean(
+      data?.requiresEmailVerification ?? data?.requires_email_verification
+    );
+    const mfaRequired = Boolean(data?.mfaRequired ?? data?.mfa_required);
+    const mfaMethod = String(data?.mfaMethod ?? data?.mfa_method ?? "").toLowerCase();
+
+    if (requiresEmailVerification) {
       toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
       close_login();
       open_signup();
@@ -738,7 +744,7 @@ loginForm?.addEventListener("submit", async (e) => {
       return;
     }
 
-    if (data?.mfaRequired === true && data?.mfaMethod === "totp") {
+    if (mfaMethod === "totp" && (mfaRequired || data?.totpEnrollment)) {
       toast("Ingresa el código TOTP de tu app autenticadora");
       open_login_totp(loginIdentifier.toLowerCase(), data?.totpEnrollment || null);
       return;
