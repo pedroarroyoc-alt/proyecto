@@ -216,6 +216,7 @@ function reset_signup_modal() {
 }
 
 function show_otp_step(email) {
+  console.log("[signup] open modal OTP", { email });
   pendingEmail = email;
   if (signupTitle) signupTitle.textContent = "Verificar correo";
   show(signupBackdrop);
@@ -228,6 +229,25 @@ function show_otp_step(email) {
   show(btnResendSignupOtp);
   if (otpHint) otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
   setTimeout(() => suOtp?.focus(), 0);
+}
+
+function is_pending_verification_response(payload = {}) {
+  const detail = payload?.detail;
+  const detailText = typeof detail === "string"
+    ? detail.toLowerCase()
+    : "";
+  const messageText = String(payload?.message || "").toLowerCase();
+
+  return Boolean(
+    payload?.requiresEmailVerification ??
+    payload?.requires_email_verification ??
+    payload?.otpSent ??
+    payload?.otp_sent
+  ) || (
+    detailText.includes("verific") && detailText.includes("correo")
+  ) || (
+    messageText.includes("verific") && messageText.includes("correo")
+  );
 }
 
 function is_gmail(email) {
@@ -300,6 +320,7 @@ function fmt_ts(value = "") {
 // =========================
 async function handle_create_account() {
   try {
+    console.log("[signup] submit");
     set_signup_hint("Validando datos...");
 
     const first = suFirstName.value.trim();
@@ -331,7 +352,12 @@ async function handle_create_account() {
       }),
     });
 
-// ✅ OTP real: no viene en la respuesta. Solo pasamos a paso 2.
+    console.log("[signup] response", data);
+
+    if (!is_pending_verification_response({ ...data, otpSent: data?.emailSent !== false })) {
+      throw new Error(data?.message || "El backend no indicó verificación OTP para completar el alta.");
+    }
+
     show_otp_step(email);
     set_otp_delivery_hint(otpHint, data, "Revisa tu correo y pega aquí el código OTP.");
 
@@ -340,23 +366,19 @@ async function handle_create_account() {
 
   } catch (err) {
     console.error(err);
+    console.log("[signup] error response", err?.payload || err?.message || err);
     const signupEmail = suEmail.value.trim().toLowerCase();
-    const requiresEmailVerification = Boolean(
-      err?.payload?.requiresEmailVerification ?? err?.payload?.requires_email_verification
-    );
-    const backendMessage = String(err?.payload?.message || err?.message || "").toLowerCase();
-    const messageSuggestsPendingVerification = backendMessage.includes("verific") && backendMessage.includes("correo");
-
+    
     // Compatibilidad: algunos backends responden con 4xx pero igualmente
     // indican que la cuenta está pendiente de verificación.
-    if ((requiresEmailVerification || messageSuggestsPendingVerification) && signupEmail) {
+    if (is_pending_verification_response(err?.payload || {}) && signupEmail) {
       show_otp_step(signupEmail);
       set_otp_delivery_hint(
         otpHint,
         err?.payload,
         "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP."
       );
-      toast(err?.payload?.message || "Te enviamos un OTP de verificación 📩");
+      toast(err?.payload?.message || err?.payload?.detail || "Te enviamos un OTP de verificación 📩");
       return;
     }
 
@@ -411,17 +433,20 @@ async function handle_resend_signup_otp() {
 
 async function handle_verify_otp() {
   try {
+    console.log("[signup] verify submit", { email: pendingEmail });
     const otp = suOtp.value.trim();
     if (!pendingEmail) return toast("No hay correo pendiente");
     if (!otp) return toast("Ingresa el OTP");
 
     set_button_loading(btnVerifyOtp, "Verificando...", "Verificar", true);
 
-    await api_json('/users/verify-email', {
+    const verifyData = await api_json('/users/verify-email', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: pendingEmail, otp }),
     });
+
+    console.log("[signup] verify success", verifyData);
 
     toast("Cuenta activada ✅");
     close_signup();
@@ -723,6 +748,7 @@ btnCreateAccount?.addEventListener("click", (e) => {
   handle_create_account();
 });
 btnVerifyOtp?.addEventListener("click", handle_verify_otp);
+btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
 
 // Permite enviar con Enter en los campos de registro.
 [suFirstName, suLastName, suEmail, suPassword, suPassword2, suTerms].forEach((field) => {
@@ -773,7 +799,6 @@ loginForm?.addEventListener("submit", async (e) => {
   if (!loginIdentifier) return toast("Ingresa tu correo o teléfono");
   if (!valid_login_identifier(loginIdentifier)) return toast("Formato inválido: usa correo o teléfono");
   if (!pwd) return toast("Ingresa tu contraseña");
-  btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(loginIdentifier)) {
