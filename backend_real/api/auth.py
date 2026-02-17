@@ -126,6 +126,7 @@ class AuthService:
             user.totpSecret = secret
             user.mfaMetodo = "totp_pending"
             user.mfaHabilitado = False
+            self._users_repo.save(user)
             enrollment = self._build_totp_enrollment(email=email, secret=secret)
             response = {
                 "message": "Configura tu app autenticadora y luego ingresa el código TOTP.",
@@ -185,6 +186,7 @@ class AuthService:
                 user.mfaMetodo = "totp"
                 if hasattr(user, "actualizar_nivel_confianza"):
                     user.actualizar_nivel_confianza()
+                self._users_repo.save(user)
             tokens = token_service.issue_tokens(email)
             self._audit.registrar_evento(
                 usuario_id=email,
@@ -197,6 +199,7 @@ class AuthService:
         for hashed in list(getattr(user, "recoveryCodesHash", [])):
             if self._pwd_hasher.verify_password(code, hashed):
                 user.recoveryCodesHash.remove(hashed)
+                self._users_repo.save(user)
                 tokens = token_service.issue_tokens(email)
                 self._audit.registrar_evento(
                     usuario_id=email,

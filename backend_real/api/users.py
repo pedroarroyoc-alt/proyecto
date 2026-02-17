@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query 
 from pydantic import BaseModel, EmailStr, field_validator
 
-from domain.usuarios import UsuarioHumano
+from domain.usuarios import EstadoUsuario, UsuarioHumano
 from services.audit_service import get_audit_service
 from services.email_service import send_otp_email
 from services.security_service import PasswordHasher, otp_service, totp_service
@@ -87,11 +91,86 @@ class UserError(Exception):
 class UserRepository:
     """Equivalente a USERS: Dict[str, UsuarioHumano]"""
 
-    def __init__(self) -> None:
+    def __init__(self, file_path: Optional[str] = None) -> None:
+        default_path = Path(__file__).resolve().parents[1] / "users_store.json"
+        configured = file_path or os.getenv("USERS_STORE_PATH", str(default_path))
+        self._file_path = Path(configured)
+        self._file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._users: Dict[str, UsuarioHumano] = {}
+        self._load()
+
+    @staticmethod
+    def _serialize_user(user: UsuarioHumano) -> dict:
+        return {
+            "id": str(user.id),
+            "email": user.email,
+            "nombre": user.nombre,
+            "telefono": user.telefono,
+            "estado": user.estado.value if isinstance(user.estado, EstadoUsuario) else str(user.estado),
+            "emailVerificado": bool(user.emailVerificado),
+            "mfaHabilitado": bool(user.mfaHabilitado),
+            "mfaMetodo": user.mfaMetodo,
+            "totpSecret": user.totpSecret,
+            "recoveryCodesHash": list(getattr(user, "recoveryCodesHash", [])),
+            "passwordHash": user.passwordHash,
+            "fechaCreacion": user.fechaCreacion.isoformat(),
+            "nivelConfianza": int(getattr(user, "nivelConfianza", 0)),
+        }
+
+    @staticmethod
+    def _deserialize_user(raw: dict) -> UsuarioHumano:
+        created_raw = raw.get("fechaCreacion")
+        try:
+            created_at = datetime.fromisoformat(created_raw) if created_raw else datetime.now(timezone.utc)
+        except ValueError:
+            created_at = datetime.now(timezone.utc)
+
+        user = UsuarioHumano(
+            email=str(raw.get("email", "")).strip().lower(),
+            nombre=str(raw.get("nombre", "")).strip(),
+            telefono=str(raw.get("telefono", "")).strip(),
+            mfaHabilitado=bool(raw.get("mfaHabilitado", False)),
+            mfaMetodo=str(raw.get("mfaMetodo", "none") or "none"),
+            totpSecret=str(raw.get("totpSecret", "") or ""),
+            recoveryCodesHash=[str(x) for x in (raw.get("recoveryCodesHash") or [])],
+            passwordHash=str(raw.get("passwordHash", "") or ""),
+            emailVerificado=bool(raw.get("emailVerificado", False)),
+            estado=EstadoUsuario(str(raw.get("estado", EstadoUsuario.PENDIENTE.value))),
+            fechaCreacion=created_at,
+            id=uuid.UUID(str(raw.get("id"))) if raw.get("id") else uuid.uuid4(),
+        )
+        user.actualizar_nivel_confianza()
+        return user
+
+    def _load(self) -> None:
+        if not self._file_path.exists():
+            return
+
+        try:
+            payload = json.loads(self._file_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"[WARN] users store corrupto: {self._file_path}")
+            return
+
+        users: Dict[str, UsuarioHumano] = {}
+        for raw in payload.get("users", []):
+            try:
+                user = self._deserialize_user(raw)
+            except Exception as exc:
+                print(f"[WARN] usuario inválido en store: {exc}")
+                continue
+            users[str(user.id)] = user
+
+        self._users = users
+
+    def _persist(self) -> None:
+        payload = {"users": [self._serialize_user(u) for u in self._users.values()]}
+        self._file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self._users: Dict[str, UsuarioHumano] = {}
 
     def save(self, user: UsuarioHumano) -> UsuarioHumano:
         self._users[str(user.id)] = user
+        self._persist()
         return user
 
     def list_all(self) -> List[UsuarioHumano]:
@@ -223,6 +302,7 @@ class UserService:
             raise UserError(message="Usuario no encontrado", status_code=404)
 
         user.marcar_email_verificado()
+        self._repository.save(user)
         self._audit.registrar_evento(
             usuario_id=str(user.id),
             accion="EMAIL_VERIFIED",
@@ -271,6 +351,7 @@ class UserService:
 
         user.mfaHabilitado = bool(payload.mfaHabilitado)
         user.actualizar_nivel_confianza()
+        self._repository.save(user)
 
         self._audit.registrar_evento(
             usuario_id=str(user.id),
@@ -294,6 +375,7 @@ class UserService:
         user.mfaMetodo = "totp_pending"
         recovery_codes = [secrets.token_hex(4) for _ in range(8)]
         user.recoveryCodesHash = [self._password_hasher.hash_password(code) for code in recovery_codes]
+        self._repository.save(user)
 
         self._audit.registrar_evento(
             usuario_id=str(user.id),
@@ -321,6 +403,7 @@ class UserService:
         user.mfaHabilitado = True
         user.mfaMetodo = "totp"
         user.actualizar_nivel_confianza()
+        self._repository.save(user)
         self._audit.registrar_evento(
             usuario_id=str(user.id),
             accion="MFA_TOTP_ENABLED",
@@ -337,6 +420,7 @@ class UserService:
         for hashed in list(getattr(user, "recoveryCodesHash", [])):
             if self._password_hasher.verify_password(incoming, hashed):
                 user.recoveryCodesHash.remove(hashed)
+                self._repository.save(user)
                 self._audit.registrar_evento(
                     usuario_id=str(user.id),
                     accion="MFA_RECOVERY_CODE_USED",
