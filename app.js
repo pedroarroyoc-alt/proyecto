@@ -62,7 +62,10 @@ const btnCloseLoginOtp = document.getElementById("btnCloseLoginOtp");
 const loginOtpForm = document.getElementById("loginOtpForm");
 const liOtp = document.getElementById("liOtp");
 const loginOtpHint = document.getElementById("loginOtpHint");
-const loginOtpLabel = document.getElementById("loginOtpLabel");
+const loginOtpLabel = document.getElementById("loginOtpLabel");4
+const loginTotpGuide = document.getElementById("loginTotpGuide");
+const loginTotpQr = document.getElementById("loginTotpQr");
+const loginTotpSecret = document.getElementById("loginTotpSecret");
 
 /* ===== Dashboard ===== */
 const listEl = document.getElementById("list");
@@ -94,7 +97,6 @@ const state = {
 
 let pendingEmail = "";
 let pendingLoginIdentifier = "";
-let pendingLoginChallenge = "otp";
 let currentUserEmail = "";
 
 // =========================
@@ -125,23 +127,35 @@ function close_login() {
   hide(loginBackdrop);
 }
 
-function open_login_otp(identifier, challenge = "otp") {
+function open_login_totp(identifier, enrollment = null) {
   pendingLoginIdentifier = identifier;
-  pendingLoginChallenge = challenge;
   if (liOtp) liOtp.value = "";
 
   if (loginOtpLabel) {
-    loginOtpLabel.textContent = challenge === "totp" ? "Código TOTP" : "Código OTP";
+    loginOtpLabel.textContent = "Código TOTP";
   }
   if (loginOtpHint) {
-    loginOtpHint.textContent = challenge === "totp"
-      ? "Ingresa el código de 6 dígitos de tu app autenticadora (Google Authenticator, Microsoft Authenticator, etc.)."
-      : "Ingresa el código OTP para completar el ingreso.";
+    loginOtpHint.textContent = "Ingresa el código de 6 dígitos de tu app autenticadora (Google Authenticator, Microsoft Authenticator, etc.).";
+  }
+
+  if (loginTotpGuide) {
+    if (enrollment?.qrUrl || enrollment?.secret) {
+      loginTotpGuide.classList.remove("hidden");
+      if (loginTotpQr) {
+        loginTotpQr.src = enrollment.qrUrl || "";
+      }
+      if (loginTotpSecret) {
+        loginTotpSecret.textContent = enrollment.secret || "-";
+      }
+    } else {
+      loginTotpGuide.classList.add("hidden");
+      if (loginTotpQr) loginTotpQr.removeAttribute("src");
+      if (loginTotpSecret) loginTotpSecret.textContent = "-";
+    }
   }
 
   hide(loginBackdrop);
   show(loginOtpBackdrop);
-  // Refuerzo por si alguna regla CSS externa pisa el display del backdrop.
   if (loginOtpBackdrop) loginOtpBackdrop.style.display = "grid";
   setTimeout(() => liOtp?.focus(), 0);
 }
@@ -149,7 +163,9 @@ function open_login_otp(identifier, challenge = "otp") {
 function close_login_otp() {
   if (loginOtpBackdrop) loginOtpBackdrop.style.display = "";
   hide(loginOtpBackdrop);
-  pendingLoginChallenge = "otp";
+  if (loginTotpGuide) loginTotpGuide.classList.add("hidden");
+  if (loginTotpQr) loginTotpQr.removeAttribute("src");
+  if (loginTotpSecret) loginTotpSecret.textContent = "-";
 }
 
 function close_signup() {
@@ -681,7 +697,7 @@ function valid_login_identifier(value) {
   return emailRegex.test(v) || phoneRegex.test(v.replace(/[\s()-]/g, ""));
 }
 
-// Submit (paso 1): validar y pedir OTP
+// Submit (paso 1): validar y pedir verificación TOTP
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const loginIdentifier = liEmail?.value?.trim() || "";
@@ -693,7 +709,7 @@ loginForm?.addEventListener("submit", async (e) => {
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(loginIdentifier)) {
-    return toast("Por ahora el login OTP solo admite correo electrónico");
+    return toast("Por ahora el login TOTP solo admite correo electrónico");
   }
 
   if (liRemember?.checked) {
@@ -724,18 +740,11 @@ loginForm?.addEventListener("submit", async (e) => {
 
     if (data?.mfaRequired === true && data?.mfaMethod === "totp") {
       toast("Ingresa el código TOTP de tu app autenticadora");
-      open_login_otp(loginIdentifier.toLowerCase(), "totp");
+      open_login_totp(loginIdentifier.toLowerCase(), data?.totpEnrollment || null);
       return;
     }
 
-    if (data?.emailSent === false) {
-      const debugOtp = data?.otpDebug ? ` OTP de prueba: ${data.otpDebug}` : "";
-      toast(`${data?.message || "No se pudo enviar el correo OTP."}${debugOtp}`);
-    } else {
-      toast(data?.message || "OTP enviado. Revisa tu correo 📩");
-    }
-
-    open_login_otp(loginIdentifier.toLowerCase(), "otp");
+    toast("Esta cuenta no tiene TOTP configurado. Configúralo en Seguridad (MFA).");
   } catch (err) {
     console.error(err);
     toast(humanize_error(err, `No se pudo conectar con el backend (${API_BASE})`));
@@ -750,11 +759,11 @@ loginOtpForm?.addEventListener("submit", async (e) => {
 
   const otp = String(liOtp?.value || "").trim();
   if (!pendingLoginIdentifier) return toast("No hay inicio de sesión pendiente");
-  if (!/^\d{6}$/.test(otp)) return toast(`Ingresa un código de 6 dígitos (${pendingLoginChallenge.toUpperCase()})`);
+  if (!/^\d{6}$/.test(otp)) return toast("Ingresa un código TOTP de 6 dígitos");
 
 
   const submitBtn = loginOtpForm.querySelector('button[type="submit"]');
-  set_button_loading(submitBtn, "Verificando...", "Verificar", true);
+  set_button_loading(submitBtn, "Verificando...", "Verificar TOTP", true);
 
   try {
     const data = await api_json('/auth/login/verify-otp', {
@@ -767,13 +776,12 @@ loginOtpForm?.addEventListener("submit", async (e) => {
     currentUserEmail = data?.user?.email || pendingLoginIdentifier;
     close_login_otp();
     pendingLoginIdentifier = "";
-    pendingLoginChallenge = "otp";
     go_to_dashboard();
   } catch (err) {
     console.error(err);
     toast(humanize_error(err, `No se pudo conectar con el backend (${API_BASE})`));
   } finally {
-    set_button_loading(submitBtn, "Verificando...", "Verificar", false);
+    set_button_loading(submitBtn, "Verificando...", "Verificar TOTP", false);
   }
 });
 

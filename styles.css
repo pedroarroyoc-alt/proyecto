@@ -683,3 +683,17 @@ select, textarea {
   height:34px;
   cursor:pointer;
 }
+
+/* TOTP login guide */
+.otp-modal{ width:min(760px, 100%); }
+.totp-guide{
+  border:1px solid #e7eaf0;
+  background:#f7f9fc;
+  border-radius:12px;
+  padding:10px;
+  display:grid;
+  gap:8px;
+}
+.totp-guide-title{ margin:0; font-size:14px; font-weight:700; color:#4b5563; }
+.totp-guide ol{ margin:0 0 0 18px; color:#374151; }
+.totp-guide code{ background:#e9eef8; padding:2px 8px; border-radius:8px; }

@@ -240,26 +240,38 @@
     </form>
   </div>
 </div>
-  <!-- Modal OTP de acceso -->
+  <!-- Modal TOTP de acceso -->
   <div class="backdrop hidden" id="loginOtpBackdrop" aria-hidden="true">
     <div class="modal otp-modal" role="dialog" aria-modal="true" aria-labelledby="loginOtpTitle">
       <div class="modal-head">
         <div>
           <h2 id="loginOtpTitle">Verificación de acceso</h2>
-          <p class="muted" id="loginOtpHint">Ingresa el código OTP para completar el ingreso.</p>
+          <p class="muted" id="loginOtpHint">Ingresa el código de 6 dígitos de tu app autenticadora (Google Authenticator, Microsoft Authenticator, etc.).</p>
         </div>
         <button class="icon-btn" id="btnCloseLoginOtp" aria-label="Cerrar">✕</button>
       </div>
 
       <form class="form" id="loginOtpForm">
+        <div class="totp-guide hidden" id="loginTotpGuide">
+          <p class="totp-guide-title">Configura tu app autenticadora:</p>
+          <ol>
+            <li>Abre Google Authenticator / Microsoft Authenticator en tu celular.</li>
+            <li>Escanea el QR o agrega manualmente la clave secreta.</li>
+            <li>Ingresa el código de 6 dígitos generado para verificar tu acceso.</li>
+          </ol>
+
+          <img class="totp-qr" id="loginTotpQr" alt="QR TOTP" />
+          <p class="muted small">Clave manual: <code id="loginTotpSecret">-</code></p>
+        </div>
+
         <label class="field">
-          <span id="loginOtpLabel">Código OTP</span>
+          <span id="loginOtpLabel">Código TOTP</span>
           <input id="liOtp" type="text" inputmode="numeric" placeholder="Ej: 123456" required />
         </label>
 
-        <p class="muted small">Revisa tu correo o dispositivo para obtener el código.</p>
+        <p class="muted small">Revisa tu app autenticadora en el celular para obtener el código.</p>
 
-        <button type="submit" class="primary-btn">Verificar OTP</button>
+        <button type="submit" class="primary-btn">Verificar TOTP</button>
       </form>
     </div>
   </div>

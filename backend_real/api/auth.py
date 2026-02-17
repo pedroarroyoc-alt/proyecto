@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
@@ -55,6 +56,16 @@ class AuthService:
     def _expose_debug_otp() -> bool:
         return os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true"
 
+    @staticmethod
+    def _build_totp_enrollment(email: str, secret: str) -> dict:
+        otpauth_uri = totp_service.provisioning_uri(email=email, secret=secret)
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={quote(otpauth_uri, safe='')}"
+        return {
+            "secret": secret,
+            "otpauthUri": otpauth_uri,
+            "qrUrl": qr_url,
+        }
+
     def request_login_otp(self, payload: LoginRequest):
         email = str(payload.email).strip().lower()
         password = (payload.password or "").strip()
@@ -108,44 +119,44 @@ class AuthService:
         if not self._pwd_hasher.verify_password(password, user.passwordHash):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-        mfa_required = bool(user.mfaHabilitado) and getattr(user, "mfaMetodo", "none") == "totp"
+        has_totp_configured = bool(user.totpSecret)
 
-        response = {
-            "message": "Credenciales válidas",
-            "mfaRequired": mfa_required,
-            "mfaMethod": getattr(user, "mfaMetodo", "none"),
-            "emailSecondFactorRequired": not mfa_required,
-        }
-
-        if mfa_required:
+        if not has_totp_configured:
+            secret = totp_service.generate_secret()
+            user.totpSecret = secret
+            user.mfaMetodo = "totp_pending"
+            user.mfaHabilitado = False
+            enrollment = self._build_totp_enrollment(email=email, secret=secret)
+            response = {
+                "message": "Configura tu app autenticadora y luego ingresa el código TOTP.",
+                "mfaRequired": True,
+                "mfaMethod": "totp",
+                "totpEnrollment": enrollment,
+                "emailSecondFactorRequired": False,
+            }
             self._audit.registrar_evento(
                 usuario_id=email,
-                accion="LOGIN_CHALLENGE_TOTP_REQUESTED",
+                accion="LOGIN_TOTP_ENROLLMENT_CREATED",
                 recurso="/auth/login/request-otp",
                 metadatos={"mfaMethod": "totp"},
             )
             return response
 
-        otp = otp_service.create(email=email, purpose="login_email", ttl_seconds=300)
-        email_sent = True
-        try:
-            send_otp_email(email, otp)
-        except EmailDeliveryError as exc:
-            email_sent = False
-            response["message"] = "No se pudo enviar OTP por correo"
-            print(f"[WARN] No se pudo enviar OTP de login a {email}: {exc}")
+        response = {
+            "message": "Credenciales válidas",
+            "mfaRequired": True,
+            "mfaMethod": "totp",
+            "emailSecondFactorRequired": False,
+        }
 
-        response["emailSent"] = email_sent
-        if not email_sent and self._expose_debug_otp():
-            response["otpDebug"] = otp
-        
         self._audit.registrar_evento(
             usuario_id=email,
-            accion="LOGIN_OTP_REQUESTED",
+            accion="LOGIN_CHALLENGE_TOTP_REQUESTED",
             recurso="/auth/login/request-otp",
-            metadatos={"emailSent": email_sent, "mfaRequired": mfa_required},
+            metadatos={"mfaMethod": "totp"},
         )
         return response
+
 
     def verify_login_otp(self, payload: LoginVerify):
         email = str(payload.email).strip().lower()
@@ -165,43 +176,37 @@ class AuthService:
         if not user:
             raise HTTPException(status_code=401, detail="Usuario no encontrado")
 
-        if bool(user.mfaHabilitado) and getattr(user, "mfaMetodo", "none") == "totp":
-            if totp_service.verify(secret=user.totpSecret, code=code):
+        if not user.totpSecret:
+            raise HTTPException(status_code=400, detail="Debes configurar TOTP antes de ingresar")
+
+        if totp_service.verify(secret=user.totpSecret, code=code):
+            if not bool(user.mfaHabilitado) or getattr(user, "mfaMetodo", "none") != "totp":
+                user.mfaHabilitado = True
+                user.mfaMetodo = "totp"
+                if hasattr(user, "actualizar_nivel_confianza"):
+                    user.actualizar_nivel_confianza()
+            tokens = token_service.issue_tokens(email)
+            self._audit.registrar_evento(
+                usuario_id=email,
+                accion="LOGIN_VERIFIED_TOTP",
+                recurso="/auth/login/verify-otp",
+                metadatos={"mfaMethod": "totp", "at": datetime.utcnow().isoformat()},
+            )
+            return {"message": "Acceso verificado por TOTP", "user": {"email": email}, **tokens}
+
+        for hashed in list(getattr(user, "recoveryCodesHash", [])):
+            if self._pwd_hasher.verify_password(code, hashed):
+                user.recoveryCodesHash.remove(hashed)
                 tokens = token_service.issue_tokens(email)
                 self._audit.registrar_evento(
                     usuario_id=email,
-                    accion="LOGIN_VERIFIED_TOTP",
+                    accion="LOGIN_VERIFIED_RECOVERY",
                     recurso="/auth/login/verify-otp",
-                    metadatos={"mfaMethod": "totp", "at": datetime.utcnow().isoformat()},
+                    metadatos={"remainingCodes": len(user.recoveryCodesHash)},
                 )
-                return {"message": "Acceso verificado por TOTP", "user": {"email": email}, **tokens}
+                return {"message": "Acceso verificado por recovery code", "user": {"email": email}, **tokens}
 
-            # fallback recovery code
-            for hashed in list(getattr(user, "recoveryCodesHash", [])):
-                if self._pwd_hasher.verify_password(code, hashed):
-                    user.recoveryCodesHash.remove(hashed)
-                    tokens = token_service.issue_tokens(email)
-                    self._audit.registrar_evento(
-                        usuario_id=email,
-                        accion="LOGIN_VERIFIED_RECOVERY",
-                        recurso="/auth/login/verify-otp",
-                        metadatos={"remainingCodes": len(user.recoveryCodesHash)},
-                    )
-                    return {"message": "Acceso verificado por recovery code", "user": {"email": email}, **tokens}
-            raise HTTPException(status_code=400, detail="Código TOTP/Recovery inválido")
-
-        ok, reason = otp_service.verify(email=email, purpose="login_email", otp=code)
-        if not ok:
-            raise HTTPException(status_code=400, detail=reason)
-
-        tokens = token_service.issue_tokens(email)
-        self._audit.registrar_evento(
-            usuario_id=email,
-            accion="LOGIN_VERIFIED_EMAIL_OTP",
-            recurso="/auth/login/verify-otp",
-            metadatos={"auth": "otp"},
-        )
-        return {"message": "Acceso verificado", "user": {"email": email}, **tokens}
+        raise HTTPException(status_code=400, detail="Código TOTP/Recovery inválido")
     
     def refresh_token(self, payload: RefreshTokenRequest):
         try:
