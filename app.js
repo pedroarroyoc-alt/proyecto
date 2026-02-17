@@ -137,6 +137,7 @@ function close_login_otp() {
 }
 
 function close_signup() {
+  if (signupBackdrop) signupBackdrop.style.display = "";
   hide(signupBackdrop);
 }
 
@@ -182,12 +183,15 @@ function reset_signup_modal() {
 function show_otp_step(email) {
   pendingEmail = email;
   if (signupTitle) signupTitle.textContent = "Verificar correo";
+  show(signupBackdrop);
+  if (signupBackdrop) signupBackdrop.style.display = "grid";
   hide(stepForm);
   show(stepOtp);
   if (stepOtp) stepOtp.style.display = "block";
   hide(btnCreateAccount);
   show(btnVerifyOtp);
   if (otpHint) otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
+  setTimeout(() => suOtp?.focus(), 0);
 }
 
 function is_gmail(email) {
