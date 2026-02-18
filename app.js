@@ -253,7 +253,11 @@ function reset_signup_modal() {
   hide(btnVerifyOtp);
   hide(btnResendSignupOtp);
 
+  if (stepForm) stepForm.style.display = "block";
   if (stepOtp) stepOtp.style.display = "";
+  if (btnCreateAccount) btnCreateAccount.style.display = "";
+  if (btnVerifyOtp) btnVerifyOtp.style.display = "";
+  if (btnResendSignupOtp) btnResendSignupOtp.style.display = "";
   if (suOtp) suOtp.value = "";
   if (suPassword) suPassword.value = "";
   if (suPassword2) suPassword2.value = "";
@@ -269,11 +273,15 @@ function show_otp_step(email) {
   show(signupBackdrop);
   if (signupBackdrop) signupBackdrop.style.display = "grid";
   hide(stepForm);
+  if (stepForm) stepForm.style.display = "none";
   show(stepOtp);
   if (stepOtp) stepOtp.style.display = "block";
   hide(btnCreateAccount);
+  if (btnCreateAccount) btnCreateAccount.style.display = "none";
   show(btnVerifyOtp);
+  if (btnVerifyOtp) btnVerifyOtp.style.display = "";
   show(btnResendSignupOtp);
+  if (btnResendSignupOtp) btnResendSignupOtp.style.display = "";
   set_text(otpHint, "Revisa tu correo y pega aquí el código OTP.");
 
   setTimeout(() => suOtp?.focus(), 0);
@@ -288,10 +296,14 @@ function show_signup_form_step(clearPending = false) {
   set_text(signupTitle, "Crear una cuenta");
   set_text(otpHint, "");
   show(stepForm);
+  if (stepForm) stepForm.style.display = "block";
   hide(stepOtp);
   show(btnCreateAccount);
+  if (btnCreateAccount) btnCreateAccount.style.display = "";
   hide(btnVerifyOtp);
+  if (btnVerifyOtp) btnVerifyOtp.style.display = "";
   hide(btnResendSignupOtp);
+  if (btnResendSignupOtp) btnResendSignupOtp.style.display = "";
   if (stepOtp) stepOtp.style.display = "";
 }
 
@@ -317,7 +329,13 @@ async function open_signup_otp_flow(email, payload = null, options = {}) {
   } = options;
 
   close_login();
-  open_signup();
+  const signupModalAlreadyOpen = Boolean(signupBackdrop && !signupBackdrop.classList.contains("hidden"));
+  if (signupModalAlreadyOpen) {
+    show(signupBackdrop);
+  } else {
+    open_signup();
+  }
+  if (signupBackdrop) signupBackdrop.style.display = "grid";
   if (suEmail) suEmail.value = normalizedEmail;
   show_otp_step(normalizedEmail);
 
@@ -501,6 +519,16 @@ async function handle_create_account() {
       } catch (resendErr) {
         console.error(resendErr);
       }
+    }
+
+    if (signupEmail && Number(err?.status) >= 500) {
+      await open_signup_otp_flow(
+        signupEmail,
+        err?.payload || null,
+        { hintMessage: "Si ya recibiste el OTP en tu correo, ingrésalo aquí para activar tu cuenta." }
+      );
+      toast("Pudimos abrir la verificación OTP para que completes la activación.");
+      return;
     }
 
     show_signup_form_step(true);
