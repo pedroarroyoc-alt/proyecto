@@ -105,6 +105,8 @@ let signupSubmitting = false;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
+const APP_BUILD = "otpfix5";
+console.info(`[cryptolock-ui] build ${APP_BUILD}`);
 
 // =========================
 // Helpers UI
@@ -250,13 +252,8 @@ function reset_signup_modal() {
 
   set_text(signupTitle, "Crear una cuenta");
   set_signup_hint(DEFAULT_SIGNUP_HINT);
-  set_text(otpHint, "");
+  show_signup_form_step(false, { force: true });
 
-  show(stepForm);
-  hide(stepOtp);
-  show(btnCreateAccount);
-  hide(btnVerifyOtp);
-  hide(btnResendSignupOtp);
 
   if (stepOtp) stepOtp.style.display = "";
   if (suOtp) suOtp.value = "";
@@ -284,7 +281,12 @@ function show_otp_step(email) {
   setTimeout(() => suOtp?.focus(), 0);
 }
 
-function show_signup_form_step(clearPending = false) {
+function show_signup_form_step(clearPending = false, options = {}) {
+  const { force = false } = options;
+  if (signupVerificationLocked && !force) {
+    return;
+  }
+
   signupVerificationLocked = false;
   if (clearPending) {
     pendingEmail = "";
@@ -474,14 +476,6 @@ async function handle_create_account() {
     set_signup_hint("Creando cuenta y enviando código OTP...");
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
     console.info("[signup] creando cuenta", { endpoint: `${API_BASE}/users/human`, email });
-
-    show_otp_step(email);
-    set_otp_delivery_hint(
-      otpHint,
-      null,
-      "Estamos creando tu cuenta y enviando el OTP..."
-    );
-    console.info("[signup] creando cuenta", { endpoint: `${API_BASE}/users/human`, email });
     
     const data = await post_json("/users/human", {
       email,
@@ -532,7 +526,7 @@ async function handle_create_account() {
     }
 
     if (!is_signup_otp_step_active()) {
-      show_signup_form_step(false);
+      show_signup_form_step(false, { force: false });
     }
     show_signup_error(
       humanize_error(
