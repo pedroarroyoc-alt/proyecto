@@ -180,7 +180,9 @@ function is_signup_otp_step_active() {
 }
 
 function close_signup(force = false) {
-  if (!force && is_signup_otp_step_active()) {
+  const isForced = typeof force === "boolean" ? force : false;
+
+  if (!isForced && is_signup_otp_step_active()) {
     toast("Primero verifica el código OTP enviado a tu correo.");
     setTimeout(() => suOtp?.focus(), 0);
     return;

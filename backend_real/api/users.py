@@ -293,6 +293,9 @@ class UserService:
         email = str(payload.email).strip().lower()
         otp = (payload.otp or "").strip()
 
+        if not otp:
+            raise UserError(message="OTP requerido", status_code=400)
+
         if not self._otp_manager.verify(email, otp):
             raise UserError(message="OTP inválido", status_code=401)
 
@@ -301,6 +304,7 @@ class UserService:
             raise UserError(message="Usuario no encontrado", status_code=404)
 
         user.marcar_email_verificado()
+        self._otp_manager.clear(email)
         self._repository.save(user)
         self._audit.registrar_evento(
             usuario_id=str(user.id),
