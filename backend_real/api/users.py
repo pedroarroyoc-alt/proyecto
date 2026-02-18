@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import APIRouter, HTTPException, Query 
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -68,6 +70,16 @@ class EnableMfaRequest(BaseModel):
     mfaHabilitado: bool = True
 
 
+class UpdateCryptoSignatureMethodRequest(BaseModel):
+    habilitado: bool = False
+    publicKeyPem: str = ""
+
+    @field_validator("publicKeyPem")
+    @classmethod
+    def normalize_public_key(cls, v: str) -> str:
+        return (v or "").strip()
+
+
 class ConfirmTotpEnrollmentRequest(BaseModel):
     codigo: str
 
@@ -111,6 +123,8 @@ class UserRepository:
             "mfaHabilitado": bool(user.mfaHabilitado),
             "mfaMetodo": user.mfaMetodo,
             "totpSecret": user.totpSecret,
+            "cryptoAuthEnabled": bool(getattr(user, "cryptoAuthEnabled", False)),
+            "cryptoPublicKeyPem": str(getattr(user, "cryptoPublicKeyPem", "") or ""),
             "recoveryCodesHash": list(getattr(user, "recoveryCodesHash", [])),
             "passwordHash": user.passwordHash,
             "fechaCreacion": user.fechaCreacion.isoformat(),
@@ -132,6 +146,8 @@ class UserRepository:
             mfaHabilitado=bool(raw.get("mfaHabilitado", False)),
             mfaMetodo=str(raw.get("mfaMetodo", "none") or "none"),
             totpSecret=str(raw.get("totpSecret", "") or ""),
+            cryptoAuthEnabled=bool(raw.get("cryptoAuthEnabled", False)),
+            cryptoPublicKeyPem=str(raw.get("cryptoPublicKeyPem", "") or ""),
             recoveryCodesHash=[str(x) for x in (raw.get("recoveryCodesHash") or [])],
             passwordHash=str(raw.get("passwordHash", "") or ""),
             emailVerificado=bool(raw.get("emailVerificado", False)),
@@ -213,6 +229,25 @@ class UserService:
         self._otp_manager = otp_manager
         self._password_hasher = password_hasher
         self._audit = get_audit_service()
+
+    @staticmethod
+    def _validate_crypto_public_key_pem(public_key_pem: str) -> str:
+        normalized = (public_key_pem or "").strip()
+        if not normalized:
+            raise UserError(message="La llave publica es obligatoria para habilitar firma criptografica", status_code=400)
+
+        if "BEGIN PUBLIC KEY" not in normalized:
+            raise UserError(message="Formato invalido de llave publica (PEM)", status_code=400)
+
+        try:
+            loaded_key = serialization.load_pem_public_key(normalized.encode("utf-8"))
+        except Exception as exc:
+            raise UserError(message=f"No se pudo leer la llave publica: {exc}", status_code=400) from exc
+
+        if not isinstance(loaded_key, rsa.RSAPublicKey):
+            raise UserError(message="Solo se soportan llaves RSA para firma", status_code=400)
+
+        return normalized
 
     def create_human_user(self, payload: CreateHumanUser) -> dict:
         email = str(payload.email).strip().lower()
@@ -369,6 +404,38 @@ class UserService:
             "message": "Configuración MFA actualizada.",
         }
 
+    def update_crypto_signature_method(self, user_id: str, payload: UpdateCryptoSignatureMethodRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        enable = bool(payload.habilitado)
+        if enable:
+            user.cryptoPublicKeyPem = self._validate_crypto_public_key_pem(payload.publicKeyPem)
+            user.cryptoAuthEnabled = True
+        else:
+            user.cryptoAuthEnabled = False
+            if payload.publicKeyPem:
+                user.cryptoPublicKeyPem = self._validate_crypto_public_key_pem(payload.publicKeyPem)
+
+        user.actualizar_nivel_confianza()
+        self._repository.save(user)
+
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="USER_CRYPTO_SIGNATURE_METHOD_UPDATED",
+            recurso=f"/users/{user_id}/methods/crypto-signature",
+            metadatos={
+                "habilitado": user.cryptoAuthEnabled,
+                "publicKeyConfigured": bool(user.cryptoPublicKeyPem),
+            },
+        )
+
+        return {
+            "user": self.to_public(user),
+            "message": "Metodo de firma criptografica actualizado.",
+        }
+
     def start_totp_enrollment(self, user_id: str) -> dict:
         user = self._repository.get_by_id(user_id)
         if not user:
@@ -468,6 +535,7 @@ class UserController:
         self.router.get("/by-email")(self.get_user_by_email)  # GET /users/by-email?email=
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
         self.router.patch("/{user_id}/mfa")(self.update_user_mfa)  # PATCH /users/{id}/mfa
+        self.router.patch("/{user_id}/methods/crypto-signature")(self.update_crypto_signature_method)
         self.router.post("/{user_id}/mfa/totp/enroll")(self.start_totp_enrollment)
         self.router.post("/{user_id}/mfa/totp/confirm")(self.confirm_totp_enrollment)
         self.router.post("/{user_id}/mfa/recovery/verify")(self.verify_recovery_code)
@@ -493,6 +561,12 @@ class UserController:
     def update_user_mfa(self, user_id: str, payload: EnableMfaRequest) -> dict:
         try:
             return self._service.update_user_mfa(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def update_crypto_signature_method(self, user_id: str, payload: UpdateCryptoSignatureMethodRequest) -> dict:
+        try:
+            return self._service.update_crypto_signature_method(user_id, payload)
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 

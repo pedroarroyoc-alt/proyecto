@@ -79,6 +79,21 @@ const loginOtpLabel = document.getElementById("loginOtpLabel");
 const loginTotpGuide = document.getElementById("loginTotpGuide");
 const loginTotpQr = document.getElementById("loginTotpQr");
 const loginTotpSecret = document.getElementById("loginTotpSecret");
+const btnCryptoLogin = document.getElementById("btnCryptoLogin");
+const cryptoLoginBackdrop = document.getElementById("cryptoLoginBackdrop");
+const btnCloseCryptoLogin = document.getElementById("btnCloseCryptoLogin");
+const cryptoChallengeQr = document.getElementById("cryptoChallengeQr");
+const cryptoChallengeId = document.getElementById("cryptoChallengeId");
+const cryptoChallengeText = document.getElementById("cryptoChallengeText");
+const btnRefreshCryptoChallenge = document.getElementById("btnRefreshCryptoChallenge");
+const btnSignCryptoHere = document.getElementById("btnSignCryptoHere");
+const cryptoChallengeStatus = document.getElementById("cryptoChallengeStatus");
+const mobileSignerApp = document.getElementById("mobileSignerApp");
+const mobileSignerEmail = document.getElementById("mobileSignerEmail");
+const mobileSignerChallengeId = document.getElementById("mobileSignerChallengeId");
+const mobileSignerChallengeText = document.getElementById("mobileSignerChallengeText");
+const btnApproveMobileChallenge = document.getElementById("btnApproveMobileChallenge");
+const mobileSignerStatus = document.getElementById("mobileSignerStatus");
 
 /* ===== Dashboard ===== */
 const listEl = document.getElementById("list");
@@ -105,7 +120,9 @@ const state = {
   view: "inbox",
   query: "",
   selectedId: null,
-  items: []
+  items: [],
+  security: {},
+  methods: {}
 };
 
 let pendingEmail = "";
@@ -113,11 +130,22 @@ let pendingLoginIdentifier = "";
 let currentUserEmail = "";
 let signupVerificationLocked = false;
 let signupSubmitting = false;
+let cryptoLoginSession = null;
+let cryptoPollTimer = null;
+let mobileSignerContext = null;
+let mobileSetupContext = null;
+let mobileSignerMode = "challenge";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
-const APP_BUILD = "otpfix9";
+const CRYPTO_DEVICE_KEY_PREFIX = "cryptolock_crypto_device_key_v1:";
+const CRYPTO_CHALLENGE_POLL_MS = 2000;
+const APP_BUILD = "otpfix11";
 console.info(`[cryptolock-ui] build ${APP_BUILD}`);
+
+if (btnSignCryptoHere) {
+  btnSignCryptoHere.classList.add("hidden");
+}
 
 // =========================
 // Helpers UI
@@ -149,6 +177,21 @@ function is_email_identifier(value) {
 
 function backend_connection_hint() {
   return `No se pudo conectar con el backend (${API_BASE}). Verifica que el servidor esté encendido y con CORS habilitado.`;
+}
+
+function mobile_qr_host_hint() {
+  const protocol = String(window.location.protocol || "");
+  const host = String(window.location.hostname || "").toLowerCase();
+
+  if (protocol === "file:") {
+    return "Estas abriendo el frontend como archivo local. Para usar celular, sirvelo por HTTP en una IP de tu red local.";
+  }
+
+  if (host === "localhost" || host === "127.0.0.1") {
+    return "Estas usando localhost/127.0.0.1. En el celular abre el frontend con la IP local de tu laptop (ej: http://192.168.1.25:5500).";
+  }
+
+  return "";
 }
 
 function get_signup_email_input() {
@@ -335,6 +378,14 @@ async function post_json(path, body = {}) {
   });
 }
 
+async function patch_json(path, body = {}) {
+  return api_json(path, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
 async function resend_verification_otp(email) {
   return post_json("/users/resend-verification-otp", { email: normalize_email(email) });
 }
@@ -482,6 +533,508 @@ function short_hash(value = "") {
 function fmt_ts(value = "") {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+}
+
+function set_status_text(el, message, isError = false) {
+  if (!el) return;
+  el.textContent = message;
+  el.style.color = isError ? "#b42318" : "";
+}
+
+function set_crypto_status(message, isError = false) {
+  set_status_text(cryptoChallengeStatus, message, isError);
+}
+
+function set_mobile_signer_status(message, isError = false) {
+  set_status_text(mobileSignerStatus, message, isError);
+}
+
+function get_crypto_storage_key(email) {
+  return `${CRYPTO_DEVICE_KEY_PREFIX}${normalize_email(email)}`;
+}
+
+function get_device_key_record(email) {
+  const key = get_crypto_storage_key(email);
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.privateKeyPkcs8B64 || !parsed?.publicKeyPem) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function set_device_key_record(email, record) {
+  localStorage.setItem(get_crypto_storage_key(email), JSON.stringify(record));
+}
+
+function clear_device_key_record(email) {
+  localStorage.removeItem(get_crypto_storage_key(email));
+}
+
+function array_buffer_to_base64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+function base64_to_array_buffer(base64) {
+  const clean = String(base64 || "").replace(/\s+/g, "");
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function base64_to_pem(base64, label) {
+  const chunks = String(base64 || "").match(/.{1,64}/g) || [];
+  return `-----BEGIN ${label}-----\n${chunks.join("\n")}\n-----END ${label}-----`;
+}
+
+function ensure_webcrypto_available() {
+  if (!window.crypto?.subtle) {
+    throw new Error("Este navegador/dispositivo no soporta WebCrypto");
+  }
+}
+
+async function generate_rsa_pss_key_pair() {
+  ensure_webcrypto_available();
+  return window.crypto.subtle.generateKey(
+    {
+      name: "RSA-PSS",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"]
+  );
+}
+
+async function export_public_key_pem(publicKey) {
+  const spki = await window.crypto.subtle.exportKey("spki", publicKey);
+  const b64 = array_buffer_to_base64(spki);
+  return base64_to_pem(b64, "PUBLIC KEY");
+}
+
+async function export_private_key_pkcs8_base64(privateKey) {
+  const pkcs8 = await window.crypto.subtle.exportKey("pkcs8", privateKey);
+  return array_buffer_to_base64(pkcs8);
+}
+
+async function import_private_key_from_record(record) {
+  return window.crypto.subtle.importKey(
+    "pkcs8",
+    base64_to_array_buffer(record.privateKeyPkcs8B64),
+    { name: "RSA-PSS", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
+
+async function ensure_device_keypair(email, options = {}) {
+  const normalizedEmail = normalize_email(email);
+  const forceRotate = Boolean(options.forceRotate);
+  if (!normalizedEmail) throw new Error("Correo requerido para gestionar llaves");
+
+  if (!forceRotate) {
+    const existing = get_device_key_record(normalizedEmail);
+    if (existing?.privateKeyPkcs8B64 && existing?.publicKeyPem) {
+      return existing;
+    }
+  }
+
+  const keyPair = await generate_rsa_pss_key_pair();
+  const [publicKeyPem, privateKeyPkcs8B64] = await Promise.all([
+    export_public_key_pem(keyPair.publicKey),
+    export_private_key_pkcs8_base64(keyPair.privateKey),
+  ]);
+
+  const record = {
+    algorithm: "RSA-PSS-SHA256",
+    publicKeyPem,
+    privateKeyPkcs8B64,
+    createdAt: new Date().toISOString(),
+  };
+
+  set_device_key_record(normalizedEmail, record);
+  return record;
+}
+
+async function sign_challenge_with_local_key(email, challenge) {
+  const normalizedEmail = normalize_email(email);
+  const record = get_device_key_record(normalizedEmail);
+  if (!record) {
+    throw new Error("No existe llave privada local para este correo. Activa el metodo en este dispositivo.");
+  }
+  if (!challenge) {
+    throw new Error("Challenge vacio");
+  }
+
+  const privateKey = await import_private_key_from_record(record);
+  const payload = new TextEncoder().encode(challenge);
+  const signature = await window.crypto.subtle.sign(
+    { name: "RSA-PSS", saltLength: 32 },
+    privateKey,
+    payload
+  );
+  return array_buffer_to_base64(signature);
+}
+
+function get_qr_code_url(value, size = 240) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(String(value || ""))}`;
+}
+
+function build_mobile_signer_link({ email, challengeId, challenge }) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("mobile_signer_setup");
+  url.searchParams.delete("userId");
+  url.searchParams.set("mobile_signer", "1");
+  url.searchParams.set("email", normalize_email(email));
+  url.searchParams.set("challengeId", challengeId);
+  url.searchParams.set("challenge", challenge);
+  url.searchParams.set("api", API_BASE);
+  return url.toString();
+}
+
+function build_mobile_setup_link({ email, userId }) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("mobile_signer");
+  url.searchParams.delete("challengeId");
+  url.searchParams.delete("challenge");
+  url.searchParams.set("mobile_signer_setup", "1");
+  url.searchParams.set("email", normalize_email(email));
+  url.searchParams.set("userId", String(userId || "").trim());
+  url.searchParams.set("api", API_BASE);
+  return url.toString();
+}
+
+function stop_crypto_polling() {
+  if (cryptoPollTimer) {
+    clearInterval(cryptoPollTimer);
+    cryptoPollTimer = null;
+  }
+}
+
+function reset_crypto_login_modal() {
+  stop_crypto_polling();
+  if (cryptoChallengeQr) cryptoChallengeQr.removeAttribute("src");
+  if (cryptoChallengeId) cryptoChallengeId.value = "";
+  if (cryptoChallengeText) cryptoChallengeText.value = "";
+  set_crypto_status("Esperando challenge...");
+}
+
+function open_crypto_login() {
+  hide(loginBackdrop);
+  show(cryptoLoginBackdrop);
+  if (cryptoLoginBackdrop) cryptoLoginBackdrop.style.display = "grid";
+  if (btnSignCryptoHere) {
+    btnSignCryptoHere.disabled = true;
+    btnSignCryptoHere.textContent = "Solo celular";
+    btnSignCryptoHere.title = "Por seguridad, esta cuenta se aprueba solo desde el celular.";
+  }
+}
+
+function close_crypto_login() {
+  stop_crypto_polling();
+  cryptoLoginSession = null;
+  if (cryptoLoginBackdrop) cryptoLoginBackdrop.style.display = "";
+  hide(cryptoLoginBackdrop);
+  reset_crypto_login_modal();
+}
+
+async function exchange_crypto_grant(challengeId, loginGrant) {
+  if (!challengeId || !loginGrant) throw new Error("Grant de login invalido");
+
+  const data = await post_json("/auth/crypto/exchange", {
+    challengeId,
+    loginGrant,
+  });
+  currentUserEmail = data?.user?.email || cryptoLoginSession?.email || "";
+  close_crypto_login();
+  close_login();
+  close_login_otp();
+  toast(data?.message || "Acceso verificado por firma criptografica");
+  await go_to_dashboard();
+}
+
+async function poll_crypto_challenge_once() {
+  const challengeId = cryptoLoginSession?.challengeId;
+  if (!challengeId) return;
+
+  try {
+    const data = await api_json(`/auth/crypto/challenge-status?challengeId=${encodeURIComponent(challengeId)}`);
+    const status = String(data?.status || "").toLowerCase();
+
+    if (status === "pending") {
+      const expiresIn = Number(data?.expiresIn || 0);
+      set_crypto_status(`Esperando aprobacion del celular/dispositivo... expira en ${Math.max(0, expiresIn)}s.`);
+      return;
+    }
+
+    if (status === "verified" && data?.loginGrant) {
+      set_crypto_status("Firma aprobada. Completando acceso...");
+      stop_crypto_polling();
+      await exchange_crypto_grant(challengeId, data.loginGrant);
+      return;
+    }
+
+    if (status === "expired" || status === "failed") {
+      stop_crypto_polling();
+      set_crypto_status(`Challenge ${status}. Genera uno nuevo para continuar.`, true);
+      return;
+    }
+  } catch (err) {
+    set_crypto_status(humanize_error(err, "No se pudo consultar estado del challenge"), true);
+  }
+}
+
+function start_crypto_challenge_polling() {
+  stop_crypto_polling();
+  let inFlight = false;
+  cryptoPollTimer = setInterval(async () => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      await poll_crypto_challenge_once();
+    } finally {
+      inFlight = false;
+    }
+  }, CRYPTO_CHALLENGE_POLL_MS);
+}
+
+async function request_crypto_challenge_for_email(email) {
+  const normalizedEmail = normalize_email(email);
+  if (!normalizedEmail) throw new Error("Ingresa un correo valido");
+
+  stop_crypto_polling();
+  set_crypto_status("Generando challenge criptografico...");
+  const data = await post_json("/auth/crypto/challenge", { email: normalizedEmail });
+  const challengeId = String(data?.challengeId || "").trim();
+  const challenge = String(data?.challenge || "").trim();
+  if (!challengeId || !challenge) {
+    throw new Error("Respuesta invalida del backend al generar challenge");
+  }
+
+  const signerLink = build_mobile_signer_link({ email: normalizedEmail, challengeId, challenge });
+  cryptoLoginSession = {
+    email: normalizedEmail,
+    challengeId,
+    challenge,
+    signerLink,
+  };
+
+  if (cryptoChallengeId) cryptoChallengeId.value = challengeId;
+  if (cryptoChallengeText) cryptoChallengeText.value = challenge;
+  if (cryptoChallengeQr) cryptoChallengeQr.src = get_qr_code_url(signerLink, 240);
+
+  set_crypto_status("Challenge activo. Escanea el QR y aprueba desde tu celular/dispositivo.");
+  start_crypto_challenge_polling();
+}
+
+async function start_crypto_login() {
+  const loginIdentifier = liEmail?.value?.trim() || "";
+  const normalizedEmail = normalize_email(loginIdentifier);
+  if (!is_email_identifier(normalizedEmail)) {
+    toast("Para firma criptografica debes ingresar un correo en el campo de login");
+    return;
+  }
+
+  persist_login_identifier(loginIdentifier);
+  open_crypto_login();
+  cryptoLoginSession = { email: normalizedEmail, challengeId: "", challenge: "" };
+  reset_crypto_login_modal();
+
+  try {
+    await request_crypto_challenge_for_email(normalizedEmail);
+  } catch (err) {
+    const msg = humanize_error(err, "No se pudo iniciar login por firma");
+    set_crypto_status(msg, true);
+    toast(msg);
+  }
+}
+
+async function sign_current_challenge_here() {
+  toast("Por seguridad, este login se aprueba solo desde tu celular.");
+}
+
+function parse_mobile_setup_context() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("mobile_signer_setup") !== "1") return null;
+
+  const email = normalize_email(params.get("email"));
+  const userId = String(params.get("userId") || "").trim();
+  return { email, userId };
+}
+
+function parse_mobile_signer_context() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("mobile_signer") !== "1") return null;
+
+  const email = normalize_email(params.get("email"));
+  const challengeId = String(params.get("challengeId") || "").trim();
+  const challenge = String(params.get("challenge") || "").trim();
+  return { email, challengeId, challenge };
+}
+
+function open_mobile_signer_base() {
+  hide(landing);
+  hide(dashboardApp);
+  hide(loginBackdrop);
+  hide(loginOtpBackdrop);
+  hide(signupBackdrop);
+  hide(signupOtpBackdrop);
+  hide(cryptoLoginBackdrop);
+  show(mobileSignerApp);
+}
+
+function open_mobile_signer_mode(context) {
+  mobileSignerMode = "challenge";
+  mobileSignerContext = context || null;
+  mobileSetupContext = null;
+  open_mobile_signer_base();
+  if (mobileSignerEmail) mobileSignerEmail.value = context?.email || "";
+  if (mobileSignerChallengeId) mobileSignerChallengeId.value = context?.challengeId || "";
+  if (mobileSignerChallengeText) mobileSignerChallengeText.value = context?.challenge || "";
+  if (btnApproveMobileChallenge) {
+    btnApproveMobileChallenge.textContent = "Firmar y aprobar acceso";
+  }
+
+  const titleEl = mobileSignerApp?.querySelector("h2");
+  const subtitleEl = mobileSignerApp?.querySelector("p.muted");
+  set_text(titleEl, "Aprobar acceso con firma");
+  set_text(
+    subtitleEl,
+    "Este dispositivo firma el challenge con su llave privada y el backend verifica con la llave publica."
+  );
+
+  if (!context?.email || !context?.challengeId || !context?.challenge) {
+    set_mobile_signer_status("Faltan datos del challenge en la URL.", true);
+    if (btnApproveMobileChallenge) btnApproveMobileChallenge.disabled = true;
+    return;
+  }
+
+  if (btnApproveMobileChallenge) btnApproveMobileChallenge.disabled = false;
+  set_mobile_signer_status("Listo para firmar y aprobar el acceso.");
+}
+
+function open_mobile_setup_mode(context) {
+  mobileSignerMode = "setup";
+  mobileSetupContext = context || null;
+  mobileSignerContext = null;
+  open_mobile_signer_base();
+
+  if (mobileSignerEmail) mobileSignerEmail.value = context?.email || "";
+  if (mobileSignerChallengeId) mobileSignerChallengeId.value = context?.userId || "";
+  if (mobileSignerChallengeText) {
+    mobileSignerChallengeText.value = "Este celular generara la llave privada localmente y registrara la llave publica en el backend.";
+  }
+  if (btnApproveMobileChallenge) {
+    btnApproveMobileChallenge.textContent = "Generar llave y activar firma criptografica";
+  }
+
+  const titleEl = mobileSignerApp?.querySelector("h2");
+  const subtitleEl = mobileSignerApp?.querySelector("p.muted");
+  set_text(titleEl, "Configurar firma en este celular");
+  set_text(
+    subtitleEl,
+    "La llave privada quedara en este dispositivo. Solo se enviara la llave publica al backend."
+  );
+
+  if (!context?.email || !context?.userId) {
+    set_mobile_signer_status("Faltan datos para configurar firma en celular.", true);
+    if (btnApproveMobileChallenge) btnApproveMobileChallenge.disabled = true;
+    return;
+  }
+
+  if (btnApproveMobileChallenge) btnApproveMobileChallenge.disabled = false;
+  set_mobile_signer_status("Listo para generar llave y activar el metodo.");
+}
+
+async function approve_mobile_challenge() {
+  const context = mobileSignerContext;
+  if (!context?.email || !context?.challengeId || !context?.challenge) {
+    set_mobile_signer_status("Challenge invalido.", true);
+    return;
+  }
+
+  set_button_loading(
+    btnApproveMobileChallenge,
+    "Firmando...",
+    "Firmar y aprobar acceso",
+    true
+  );
+  try {
+    const signature = await sign_challenge_with_local_key(context.email, context.challenge);
+    await post_json("/auth/crypto/verify", {
+      email: context.email,
+      challengeId: context.challengeId,
+      signature,
+    });
+    set_mobile_signer_status("Acceso aprobado. Regresa a tu laptop para completar el login.");
+    toast("Firma enviada correctamente");
+  } catch (err) {
+    const msg = humanize_error(err, "No se pudo firmar/aprobar");
+    set_mobile_signer_status(msg, true);
+    toast(msg);
+  } finally {
+    set_button_loading(
+      btnApproveMobileChallenge,
+      "Firmando...",
+      "Firmar y aprobar acceso",
+      false
+    );
+  }
+}
+
+async function configure_mobile_key_on_this_device() {
+  const context = mobileSetupContext;
+  if (!context?.email || !context?.userId) {
+    set_mobile_signer_status("No hay datos de configuracion en la URL.", true);
+    return;
+  }
+
+  const idleLabel = "Generar llave y activar firma criptografica";
+  set_button_loading(
+    btnApproveMobileChallenge,
+    "Configurando...",
+    idleLabel,
+    true
+  );
+
+  try {
+    const keyRecord = await ensure_device_keypair(context.email, { forceRotate: true });
+    const data = await patch_json(`/users/${context.userId}/methods/crypto-signature`, {
+      habilitado: true,
+      publicKeyPem: keyRecord.publicKeyPem,
+    });
+    set_mobile_signer_status("Firma activada en este celular. Regresa a tu laptop y actualiza el estado.");
+    toast(data?.message || "Firma criptografica activada");
+  } catch (err) {
+    const msg = humanize_error(err, "No se pudo configurar firma en este celular");
+    set_mobile_signer_status(msg, true);
+    toast(msg);
+  } finally {
+    set_button_loading(
+      btnApproveMobileChallenge,
+      "Configurando...",
+      idleLabel,
+      false
+    );
+  }
+}
+
+async function handle_mobile_signer_action() {
+  if (mobileSignerMode === "setup") {
+    await configure_mobile_key_on_this_device();
+    return;
+  }
+  await approve_mobile_challenge();
 }
 
 // =========================
@@ -731,6 +1284,65 @@ function render_detail(item) {
     return;
   }
 
+  if (state.view === "methods") {
+    const cryptoEnabled = Boolean(state?.methods?.cryptoAuthEnabled);
+    const backendPublicKey = Boolean(state?.methods?.cryptoPublicKeyConfigured);
+    const localPrivateKey = Boolean(state?.methods?.localPrivateKeyAvailable);
+    const setupLink = String(state?.methods?.setupLink || "");
+    const setupQrUrl = String(state?.methods?.setupQrUrl || "");
+    const qrHostHint = mobile_qr_host_hint();
+    const hostHintHtml = qrHostHint ? `<p class="muted small">${qrHostHint}</p>` : "";
+    const hasSession = Boolean(currentUserEmail);
+    const stateText = cryptoEnabled ? "Activo" : "Inactivo";
+    const backendText = backendPublicKey ? "Configurada" : "No configurada";
+    const localKeyText = localPrivateKey
+      ? "Disponible en este dispositivo (recomendado eliminarla en laptop)"
+      : "No encontrada en este dispositivo";
+    const setupPanelHtml = setupLink ? `
+      <hr />
+      <h3>Configurar en celular</h3>
+      <p>1) Escanea este QR con tu celular.</p>
+      <img class="totp-qr" alt="QR configuracion firma en celular" src="${setupQrUrl}" />
+      <p class="muted small">2) En el celular pulsa <b>Generar llave y activar firma criptografica</b>.</p>
+      <p class="muted small">3) Vuelve aqui y presiona <b>Actualizar estado</b>.</p>
+      ${hostHintHtml}
+    ` : "";
+    const localKeyActionHtml = localPrivateKey
+      ? `<button class="ghost" id="btnClearLocalCryptoKey">Eliminar llave local de este dispositivo</button>`
+      : "";
+
+    detailEl.innerHTML = `
+      <div class="detail-card">
+        <h2>Metodo: Firma criptografica (celular + QR/challenge)</h2>
+        <p>Este metodo usa <b>llave privada en tu celular/dispositivo</b> para firmar un challenge, y el backend valida con tu <b>llave publica</b>.</p>
+        <ul>
+          <li><b>Estado:</b> ${stateText}</li>
+          <li><b>Llave publica en backend:</b> ${backendText}</li>
+          <li><b>Llave privada local:</b> ${localKeyText}</li>
+        </ul>
+        <p class="muted">Este metodo debe configurarse desde celular. La laptop no debe conservar llave privada.</p>
+        <div class="row">
+          <button class="btn" id="btnEnableCryptoMethod" ${hasSession ? "" : "disabled"}>${cryptoEnabled ? "Reconfigurar en celular" : "Configurar en celular"}</button>
+          <button class="ghost" id="btnRefreshMethodsState" ${hasSession ? "" : "disabled"}>Actualizar estado</button>
+          <button class="ghost" id="btnDisableCryptoMethod" ${hasSession && cryptoEnabled ? "" : "disabled"}>Desactivar</button>
+        </div>
+        <div class="row">
+          ${localKeyActionHtml}
+        </div>
+        <p class="muted small" id="methodsCryptoHint">${hasSession ? "Recomendado: abre este QR desde tu celular y configura ahi la llave privada." : "Inicia sesion para configurar este metodo."}</p>
+        ${setupPanelHtml}
+      </div>
+    `;
+
+    detailEl.querySelector("#btnEnableCryptoMethod")?.addEventListener("click", enable_crypto_signature_method);
+    detailEl.querySelector("#btnRefreshMethodsState")?.addEventListener("click", () => {
+      ensure_methods_context().finally(render);
+    });
+    detailEl.querySelector("#btnDisableCryptoMethod")?.addEventListener("click", disable_crypto_signature_method);
+    detailEl.querySelector("#btnClearLocalCryptoKey")?.addEventListener("click", clear_local_crypto_key_for_current_device);
+    return;
+  }
+
   if (!item) {
     detailEl.innerHTML = `
       <div class="detail-empty">
@@ -789,6 +1401,82 @@ async function ensure_security_context() {
   state.security.mfaHabilitado = Boolean(user.mfaHabilitado);
   state.security.mfaMetodo = user.mfaMetodo || "none";
   return user;
+}
+
+async function ensure_methods_context() {
+  if (!state.methods) state.methods = {};
+  const user = await fetch_current_user_profile();
+  if (!user?.id) return null;
+
+  const email = normalize_email(user.email || currentUserEmail);
+  const localRecord = get_device_key_record(email);
+
+  state.methods.userId = user.id;
+  state.methods.email = email;
+  state.methods.cryptoAuthEnabled = Boolean(user.cryptoAuthEnabled);
+  state.methods.cryptoPublicKeyConfigured = Boolean(
+    user.cryptoPublicKeyConfigured || user.cryptoPublicKeyPem
+  );
+  state.methods.localPrivateKeyAvailable = Boolean(localRecord?.privateKeyPkcs8B64);
+  return user;
+}
+
+async function clear_local_crypto_key_for_current_device() {
+  const user = await ensure_methods_context();
+  if (!user?.email) return toast("No se pudo obtener el correo del usuario");
+  clear_device_key_record(user.email);
+  state.methods.localPrivateKeyAvailable = false;
+  toast("Llave privada local eliminada de este dispositivo");
+  render();
+}
+
+async function enable_crypto_signature_method() {
+  if (!currentUserEmail) return toast("Debes iniciar sesion primero");
+  const user = await ensure_methods_context();
+  if (!user?.id) return toast("No se pudo cargar el usuario");
+
+  const enableBtn = detailEl?.querySelector("#btnEnableCryptoMethod");
+  const idleLabel = state?.methods?.cryptoAuthEnabled
+    ? "Reconfigurar en celular"
+    : "Configurar en celular";
+  set_button_loading(enableBtn, "Preparando...", idleLabel, true);
+
+  try {
+    clear_device_key_record(user.email);
+    state.methods.localPrivateKeyAvailable = false;
+    state.methods.setupLink = build_mobile_setup_link({ email: user.email, userId: user.id });
+    state.methods.setupQrUrl = get_qr_code_url(state.methods.setupLink, 260);
+    const hostHint = mobile_qr_host_hint();
+    toast(hostHint || "Escanea el QR con tu celular para generar la llave privada y activar firma criptografica");
+    render();
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo preparar la configuracion en celular"));
+  } finally {
+    set_button_loading(enableBtn, "Preparando...", idleLabel, false);
+  }
+}
+
+async function disable_crypto_signature_method() {
+  if (!currentUserEmail) return toast("Debes iniciar sesion primero");
+  const user = await ensure_methods_context();
+  if (!user?.id) return toast("No se pudo cargar el usuario");
+
+  const disableBtn = detailEl?.querySelector("#btnDisableCryptoMethod");
+  set_button_loading(disableBtn, "Desactivando...", "Desactivar", true);
+  try {
+    const data = await patch_json(`/users/${user.id}/methods/crypto-signature`, {
+      habilitado: false,
+    });
+    toast(data?.message || "Firma criptografica desactivada");
+    state.methods.setupLink = "";
+    state.methods.setupQrUrl = "";
+    await ensure_methods_context();
+    render();
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo desactivar firma criptografica"));
+  } finally {
+    set_button_loading(disableBtn, "Desactivando...", "Desactivar", false);
+  }
 }
 
 async function start_totp_setup() {
@@ -885,11 +1573,13 @@ async function refresh_blockchain_panel() {
 async function go_to_dashboard() {
   hide(landing);
   show(dashboardApp);
+  hide(mobileSignerApp);
 
   state.view = "ledger";
   navItems.forEach(n => n.classList.toggle("active", n.dataset.view === state.view));
 
   await ensure_security_context().catch(() => null);
+  await ensure_methods_context().catch(() => null);
   await refresh_blockchain_panel().catch(() => {});
   render();
 }
@@ -897,6 +1587,7 @@ async function go_to_dashboard() {
 function go_to_landing() {
   show(landing);
   hide(dashboardApp);
+  hide(mobileSignerApp);
 }
 
 function preload_login_identifier() {
@@ -965,6 +1656,23 @@ btnCloseLogin?.addEventListener("click", close_login);
 btnCloseLoginOtp?.addEventListener("click", close_login_otp);
 loginBackdrop?.addEventListener("click", (e) => e.target === loginBackdrop && close_login());
 loginOtpBackdrop?.addEventListener("click", (e) => e.target === loginOtpBackdrop && close_login_otp());
+btnCryptoLogin?.addEventListener("click", start_crypto_login);
+btnCloseCryptoLogin?.addEventListener("click", close_crypto_login);
+cryptoLoginBackdrop?.addEventListener("click", (e) => e.target === cryptoLoginBackdrop && close_crypto_login());
+btnRefreshCryptoChallenge?.addEventListener("click", () => {
+  const email = cryptoLoginSession?.email || normalize_email(liEmail?.value);
+  if (!email) {
+    toast("Ingresa un correo para generar challenge");
+    return;
+  }
+  request_crypto_challenge_for_email(email).catch((err) => {
+    const msg = humanize_error(err, "No se pudo regenerar challenge");
+    set_crypto_status(msg, true);
+    toast(msg);
+  });
+});
+btnSignCryptoHere?.addEventListener("click", sign_current_challenge_here);
+btnApproveMobileChallenge?.addEventListener("click", handle_mobile_signer_action);
 
 btnTogglePwd?.addEventListener("click", () => {
   const isPwd = liPassword.type === "password";
@@ -1093,6 +1801,11 @@ navItems.forEach((btn) => {
       return;
     }
 
+    if (state.view === "methods") {
+      ensure_methods_context().finally(render);
+      return;
+    }
+
     render();
   });
 });
@@ -1115,6 +1828,16 @@ btnRefresh?.addEventListener("click", () => {
     return;
   }
 
+  if (state.view === "security") {
+    ensure_security_context().finally(render);
+    return;
+  }
+
+  if (state.view === "methods") {
+    ensure_methods_context().finally(render);
+    return;
+  }
+
   render();
 });
 
@@ -1130,6 +1853,7 @@ document.addEventListener("keydown", (e) => {
   close_signup_otp();
   close_login();
   close_login_otp();
+  close_crypto_login();
 });
 
 // =========================
@@ -1137,7 +1861,15 @@ document.addEventListener("keydown", (e) => {
 // =========================
 state.items = load_items();
 preload_login_identifier();
-go_to_landing();
+mobileSetupContext = parse_mobile_setup_context();
+mobileSignerContext = parse_mobile_signer_context();
+if (mobileSetupContext) {
+  open_mobile_setup_mode(mobileSetupContext);
+} else if (mobileSignerContext) {
+  open_mobile_signer_mode(mobileSignerContext);
+} else {
+  go_to_landing();
+}
 
 void modalBackdrop;
 void btnCompose;

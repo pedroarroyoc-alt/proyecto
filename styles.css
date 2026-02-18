@@ -688,3 +688,66 @@ select, textarea {
 .totp-guide-title{ margin:0; font-size:14px; font-weight:700; color:#4b5563; }
 .totp-guide ol{ margin:0 0 0 18px; color:#374151; }
 .totp-guide code{ background:#e9eef8; padding:2px 8px; border-radius:8px; }
+
+.crypto-login-grid{
+  display:grid;
+  grid-template-columns: 240px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.crypto-qr-wrap{
+  border:1px solid #e7eaf0;
+  border-radius:12px;
+  padding:10px;
+  display:grid;
+  gap:8px;
+  place-items:center;
+  background:#f7f9fc;
+}
+
+.crypto-challenge-panel{
+  display:grid;
+  gap:10px;
+}
+
+.crypto-challenge-panel textarea{
+  min-height:84px;
+  resize:vertical;
+}
+
+.crypto-row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.mobile-signer{
+  min-height:100vh;
+  padding:24px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(180deg, #f7f9fc 0%, #eef3ff 100%);
+}
+
+.mobile-signer-card{
+  width:min(620px, 100%);
+  background:#fff;
+  border:1px solid #e7eaf0;
+  border-radius:16px;
+  padding:18px;
+  display:grid;
+  gap:12px;
+}
+
+@media (max-width: 900px){
+  .crypto-login-grid{
+    grid-template-columns: 1fr;
+  }
+
+  .crypto-qr-wrap .totp-qr{
+    width: min(100%, 260px);
+    height: auto;
+    aspect-ratio: 1/1;
+  }
+}

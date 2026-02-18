@@ -242,6 +242,7 @@
       </label>
 
       <button type="submit" class="primary-btn">Ingresar</button>
+      <button type="button" class="ghost-btn" id="btnCryptoLogin">Ingresar con celular (firma)</button>
 
 
       <p class="muted small center">
@@ -287,8 +288,73 @@
     </div>
   </div>
 
+  <!-- Modal login cripto (challenge + firma) -->
+  <div class="backdrop hidden" id="cryptoLoginBackdrop" aria-hidden="true">
+    <div class="modal otp-modal" role="dialog" aria-modal="true" aria-labelledby="cryptoLoginTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="cryptoLoginTitle">Login por firma criptografica</h2>
+          <p class="muted" id="cryptoLoginHint">Escanea el QR desde tu celular/dispositivo con llave privada y aprueba el acceso.</p>
+        </div>
+        <button class="icon-btn" id="btnCloseCryptoLogin" aria-label="Cerrar">&#10005;</button>
+      </div>
+
+      <div class="form">
+        <div class="crypto-login-grid">
+          <div class="crypto-qr-wrap">
+            <img class="totp-qr" id="cryptoChallengeQr" alt="QR challenge criptografico" />
+            <p class="muted small center">QR para aprobar desde celular</p>
+          </div>
+
+          <div class="crypto-challenge-panel">
+            <label class="field">
+              <span>Challenge ID</span>
+              <input id="cryptoChallengeId" type="text" readonly />
+            </label>
+            <label class="field">
+              <span>Challenge</span>
+              <textarea id="cryptoChallengeText" rows="3" readonly></textarea>
+            </label>
+
+            <div class="crypto-row">
+              <button type="button" class="ghost-btn" id="btnRefreshCryptoChallenge">Regenerar challenge</button>
+              <button type="button" class="ghost-btn" id="btnSignCryptoHere">Firmar en este dispositivo</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="muted small" id="cryptoChallengeStatus">Esperando challenge...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modo celular para firmar challenge -->
+  <section class="mobile-signer hidden" id="mobileSignerApp">
+    <div class="mobile-signer-card">
+      <h2>Aprobar acceso con firma</h2>
+      <p class="muted">Este dispositivo firma el challenge con su llave privada y el backend verifica con la llave publica.</p>
+
+      <label class="field">
+        <span>Correo</span>
+        <input id="mobileSignerEmail" type="text" readonly />
+      </label>
+      <label class="field">
+        <span>Challenge ID</span>
+        <input id="mobileSignerChallengeId" type="text" readonly />
+      </label>
+      <label class="field">
+        <span>Challenge</span>
+        <textarea id="mobileSignerChallengeText" rows="3" readonly></textarea>
+      </label>
+
+      <button class="primary-btn" id="btnApproveMobileChallenge" type="button">Firmar y aprobar acceso</button>
+      <p class="muted small" id="mobileSignerStatus">Listo para firmar.</p>
+    </div>
+  </section>
+
   <!-- JS: lógica del frontend (al final para asegurar que cargue todos los modales) -->
-  <script src="./app.js?v=20260218-otpfix9"></script>
+  <script src="./app.js?v=20260218-otpfix11"></script>
 
 </body>
 </html>
+

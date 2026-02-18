@@ -74,6 +74,23 @@ class SecurityDataStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS crypto_challenges (
+                    challenge_id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    challenge TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    expires_at INTEGER NOT NULL,
+                    max_attempts INTEGER NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    login_grant TEXT NOT NULL DEFAULT '',
+                    grant_expires_at INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    verified_at INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
 
     def _backup_and_recreate_corrupted_db(self) -> None:
         if self._db_path.exists():
@@ -181,6 +198,117 @@ class SecurityDataStore:
     def revoke_refresh_token(self, token_id: str) -> None:
         with self._conn() as conn:
             conn.execute("UPDATE refresh_tokens SET revoked=1 WHERE token_id=?", (token_id,))
+
+    def put_crypto_challenge(
+        self,
+        *,
+        challenge_id: str,
+        email: str,
+        challenge: str,
+        ttl_seconds: int,
+        max_attempts: int = 5,
+    ) -> None:
+        now = self._now_ts()
+        expires_at = now + ttl_seconds
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO crypto_challenges(
+                    challenge_id, email, challenge, status, expires_at, max_attempts, attempts,
+                    login_grant, grant_expires_at, created_at, verified_at
+                ) VALUES (?, ?, ?, 'pending', ?, ?, 0, '', 0, ?, 0)
+                ON CONFLICT(challenge_id)
+                DO UPDATE SET
+                    email=excluded.email,
+                    challenge=excluded.challenge,
+                    status='pending',
+                    expires_at=excluded.expires_at,
+                    max_attempts=excluded.max_attempts,
+                    attempts=0,
+                    login_grant='',
+                    grant_expires_at=0,
+                    created_at=excluded.created_at,
+                    verified_at=0
+                """,
+                (challenge_id, email, challenge, expires_at, max_attempts, now),
+            )
+
+    def get_crypto_challenge(self, challenge_id: str) -> Optional[dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT challenge_id, email, challenge, status, expires_at, max_attempts, attempts,
+                       login_grant, grant_expires_at, created_at, verified_at
+                FROM crypto_challenges
+                WHERE challenge_id=?
+                """,
+                (challenge_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def increment_crypto_challenge_attempt(self, challenge_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE crypto_challenges SET attempts = attempts + 1 WHERE challenge_id=?",
+                (challenge_id,),
+            )
+
+    def mark_crypto_challenge_failed(self, challenge_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE crypto_challenges
+                SET status='failed', login_grant='', grant_expires_at=0
+                WHERE challenge_id=?
+                """,
+                (challenge_id,),
+            )
+
+    def mark_crypto_challenge_verified(self, *, challenge_id: str, login_grant: str, grant_ttl_seconds: int) -> None:
+        now = self._now_ts()
+        grant_expires_at = now + grant_ttl_seconds
+        with self._conn() as conn:
+            conn.execute(
+                """
+                UPDATE crypto_challenges
+                SET status='verified', login_grant=?, grant_expires_at=?, verified_at=?
+                WHERE challenge_id=?
+                """,
+                (login_grant, grant_expires_at, now, challenge_id),
+            )
+
+    def consume_crypto_login_grant(self, *, challenge_id: str, login_grant: str) -> Optional[dict[str, Any]]:
+        now = self._now_ts()
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT challenge_id, email, challenge, status, expires_at, max_attempts, attempts,
+                       login_grant, grant_expires_at, created_at, verified_at
+                FROM crypto_challenges
+                WHERE challenge_id=?
+                """,
+                (challenge_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            payload = dict(row)
+            if payload["status"] != "verified":
+                return None
+            if payload["login_grant"] != login_grant:
+                return None
+            if int(payload["expires_at"]) < now or int(payload["grant_expires_at"]) < now:
+                conn.execute(
+                    "UPDATE crypto_challenges SET status='expired', login_grant='', grant_expires_at=0 WHERE challenge_id=?",
+                    (challenge_id,),
+                )
+                return None
+
+            conn.execute(
+                "UPDATE crypto_challenges SET status='consumed', login_grant='', grant_expires_at=0 WHERE challenge_id=?",
+                (challenge_id,),
+            )
+        return payload
 
 
 class PasswordHasher:

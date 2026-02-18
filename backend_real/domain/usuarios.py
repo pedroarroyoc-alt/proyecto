@@ -38,7 +38,17 @@ class Usuario:
             return
 
         tiene_mfa = bool(getattr(self, "mfaHabilitado", False))
-        self.nivelConfianza = 2 if tiene_mfa else 1
+        tiene_firma_crypto = bool(
+            getattr(self, "cryptoAuthEnabled", False) and getattr(self, "cryptoPublicKeyPem", "")
+        )
+
+        if tiene_mfa and tiene_firma_crypto:
+            self.nivelConfianza = 3
+            return
+        if tiene_mfa or tiene_firma_crypto:
+            self.nivelConfianza = 2
+            return
+        self.nivelConfianza = 1
 
     def marcar_email_verificado(self) -> None:
         self.emailVerificado = True
@@ -50,7 +60,8 @@ class Usuario:
         descripciones = {
             0: "No verificado",
             1: "Email verificado por OTP (sin MFA)",
-            2: "Email verificado + MFA habilitado",
+            2: "Email verificado + factor fuerte habilitado",
+            3: "Email verificado + TOTP + firma criptografica",
         }
         return descripciones.get(nivel, "Nivel personalizado")
 
@@ -63,6 +74,8 @@ class Usuario:
             "emailVerificado": self.emailVerificado,
             "mfaHabilitado": bool(getattr(self, "mfaHabilitado", False)),
             "mfaMetodo": getattr(self, "mfaMetodo", "none"),
+            "cryptoAuthEnabled": bool(getattr(self, "cryptoAuthEnabled", False)),
+            "cryptoPublicKeyConfigured": bool(getattr(self, "cryptoPublicKeyPem", "")),
             "fechaCreacion": self.fechaCreacion.isoformat(),
             "nivelConfianza": self.nivelConfianza,
             "nivelConfianzaDescripcion": self.descripcion_nivel_confianza(self.nivelConfianza),
@@ -78,6 +91,8 @@ class UsuarioHumano(Usuario):
     totpSecret: str = ""
     recoveryCodesHash: List[str] = field(default_factory=list)
     passwordHash: str = ""
+    cryptoAuthEnabled: bool = False
+    cryptoPublicKeyPem: str = ""
 
     def verificarMFA(self) -> bool:
         return bool(self.mfaHabilitado)
