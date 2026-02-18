@@ -15,6 +15,7 @@ function resolveApiBase() {
 }
 
 const API_BASE = resolveApiBase();
+const JSON_HEADERS = { "Content-Type": "application/json" };
 
 // =========================
 // Referencias HTML
@@ -101,6 +102,7 @@ let pendingLoginIdentifier = "";
 let currentUserEmail = "";
 let signupVerificationLocked = false;
 let signupSubmitting = false;
+
 // =========================
 // Helpers UI
 // =========================
@@ -109,10 +111,22 @@ function show(el) {
   el.classList.remove("hidden");
   el.removeAttribute("aria-hidden");
 }
+
 function hide(el) {
   if (!el) return;
   el.classList.add("hidden");
   el.setAttribute("aria-hidden", "true");
+}
+
+function set_text(el, value) {
+  if (!el) return;
+  el.textContent = value;
+}
+
+function clear_totp_guide() {
+  loginTotpGuide?.classList.add("hidden");
+  loginTotpQr?.removeAttribute("src");
+  set_text(loginTotpSecret, "-");
 }
 
 function open_signup() {
@@ -133,26 +147,19 @@ function open_login_totp(identifier, enrollment = null) {
   pendingLoginIdentifier = identifier;
   if (liOtp) liOtp.value = "";
 
-  if (loginOtpLabel) {
-    loginOtpLabel.textContent = "Código TOTP";
-  }
-  if (loginOtpHint) {
-    loginOtpHint.textContent = "Ingresa el código de 6 dígitos de tu app autenticadora (Google Authenticator, Microsoft Authenticator, etc.).";
-  }
+  set_text(loginOtpLabel, "Código TOTP");
+  set_text(
+    loginOtpHint,
+    "Ingresa el código de 6 dígitos de tu app autenticadora (Google Authenticator, Microsoft Authenticator, etc.)."
+  );
 
   if (loginTotpGuide) {
     if (enrollment?.qrUrl || enrollment?.secret) {
       loginTotpGuide.classList.remove("hidden");
-      if (loginTotpQr) {
-        loginTotpQr.src = enrollment.qrUrl || "";
-      }
-      if (loginTotpSecret) {
-        loginTotpSecret.textContent = enrollment.secret || "-";
-      }
+      if (loginTotpQr) loginTotpQr.src = enrollment.qrUrl || "";
+      set_text(loginTotpSecret, enrollment.secret || "-");
     } else {
-      loginTotpGuide.classList.add("hidden");
-      if (loginTotpQr) loginTotpQr.removeAttribute("src");
-      if (loginTotpSecret) loginTotpSecret.textContent = "-";
+      clear_totp_guide();
     }
   }
 
@@ -165,9 +172,7 @@ function open_login_totp(identifier, enrollment = null) {
 function close_login_otp() {
   if (loginOtpBackdrop) loginOtpBackdrop.style.display = "";
   hide(loginOtpBackdrop);
-  if (loginTotpGuide) loginTotpGuide.classList.add("hidden");
-  if (loginTotpQr) loginTotpQr.removeAttribute("src");
-  if (loginTotpSecret) loginTotpSecret.textContent = "-";
+  clear_totp_guide();
 }
 
 function is_signup_otp_step_active() {
@@ -204,18 +209,20 @@ function set_button_loading(button, loadingText, idleText, isLoading) {
 
 function set_otp_delivery_hint(targetEl, data, fallback) {
   if (!targetEl) return;
+
   targetEl.textContent = data?.emailSent === false
     ? (data?.otpDebug
         ? `No se pudo enviar correo. OTP de prueba: ${data.otpDebug}`
         : "No se pudo enviar correo. Solicita soporte para configurar SMTP.")
     : fallback;
 }
+
 function reset_signup_modal() {
   pendingEmail = "";
   signupVerificationLocked = false;
-  if (signupTitle) signupTitle.textContent = "Crear una cuenta";
-  if (otpHint) otpHint.textContent = "";
 
+  set_text(signupTitle, "Crear una cuenta");
+  set_text(otpHint, "");
 
   show(stepForm);
   hide(stepOtp);
@@ -223,6 +230,7 @@ function reset_signup_modal() {
   hide(btnVerifyOtp);
   hide(btnResendSignupOtp);
 
+  if (stepOtp) stepOtp.style.display = "";
   if (suOtp) suOtp.value = "";
   if (suTerms) suTerms.checked = true;
 }
@@ -231,7 +239,8 @@ function show_otp_step(email) {
   console.log("[signup] open modal OTP", { email });
   pendingEmail = email;
   signupVerificationLocked = true;
-  if (signupTitle) signupTitle.textContent = "Verificar correo";
+
+  set_text(signupTitle, "Verificar correo");
   show(signupBackdrop);
   if (signupBackdrop) signupBackdrop.style.display = "grid";
   hide(stepForm);
@@ -240,7 +249,8 @@ function show_otp_step(email) {
   hide(btnCreateAccount);
   show(btnVerifyOtp);
   show(btnResendSignupOtp);
-  if (otpHint) otpHint.textContent = "Revisa tu correo y pega aquí el código OTP.";
+  set_text(otpHint, "Revisa tu correo y pega aquí el código OTP.");
+
   setTimeout(() => suOtp?.focus(), 0);
 }
 
@@ -249,12 +259,21 @@ function show_signup_form_step(clearPending = false) {
     pendingEmail = "";
     signupVerificationLocked = false;
   }
-  if (signupTitle) signupTitle.textContent = "Crear una cuenta";
+
+  set_text(signupTitle, "Crear una cuenta");
   show(stepForm);
   hide(stepOtp);
   show(btnCreateAccount);
   hide(btnVerifyOtp);
   hide(btnResendSignupOtp);
+}
+
+async function post_json(path, body = {}) {
+  return api_json(path, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
 }
 
 async function open_signup_otp_flow(email, payload = null) {
@@ -276,11 +295,7 @@ async function open_signup_otp_flow(email, payload = null) {
   }
 
   try {
-    const resendData = await api_json('/users/resend-verification-otp', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: normalizedEmail }),
-    });
+    const resendData = await post_json("/users/resend-verification-otp", { email: normalizedEmail });
     set_otp_delivery_hint(otpHint, resendData, "Te reenviamos el OTP. Revisa tu correo.");
     toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
   } catch (err) {
@@ -293,7 +308,6 @@ async function open_signup_otp_flow(email, payload = null) {
   }
 }
 
-
 function is_pending_verification_response(payload = {}) {
   const detail = payload?.detail;
   const detailText = typeof detail === "string"
@@ -302,16 +316,16 @@ function is_pending_verification_response(payload = {}) {
   const messageText = String(payload?.message || "").toLowerCase();
   const combinedText = `${detailText} ${messageText}`;
   const mentionsOtpPending = combinedText.includes("otp") && (
-    combinedText.includes("enviado") ||
-    combinedText.includes("pendiente") ||
-    combinedText.includes("verifica")
+    combinedText.includes("enviado")
+    || combinedText.includes("pendiente")
+    || combinedText.includes("verifica")
   );
 
   return Boolean(
-    payload?.requiresEmailVerification ??
-    payload?.requires_email_verification ??
-    payload?.otpSent ??
-    payload?.otp_sent
+    payload?.requiresEmailVerification
+    ?? payload?.requires_email_verification
+    ?? payload?.otpSent
+    ?? payload?.otp_sent
   ) || (
     detailText.includes("verific") && detailText.includes("correo")
   ) || (
@@ -344,10 +358,10 @@ function toast(msg) {
   }, 1800);
 }
 
-
 async function api_json(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, options);
   const data = await res.json().catch(() => ({}));
+
   if (!res.ok) {
     const rawDetail = data?.detail;
     const detail = Array.isArray(rawDetail)
@@ -358,6 +372,7 @@ async function api_json(path, options = {}) {
     error.payload = data;
     throw error;
   }
+
   return data;
 }
 
@@ -373,16 +388,14 @@ function humanize_error(err, fallback) {
   return message;
 }
 
-
 function short_hash(value = "") {
-  return String(value).slice(0, 12) + "...";
+  return `${String(value).slice(0, 12)}...`;
 }
 
 function fmt_ts(value = "") {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
 }
-
 
 // =========================
 // Crear cuenta (Paso 1)
@@ -411,36 +424,27 @@ async function handle_create_account() {
     if (!okTerms) return show_signup_error("Acepta los términos");
 
     set_signup_hint("Creando cuenta y enviando código OTP...");
-
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
-    const data = await api_json('/users/human', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        nombre: `${first} ${last}`,
-        telefono: "",
-        mfaHabilitado: false,
-        password: p1
-      }),
+    const data = await post_json("/users/human", {
+      email,
+      nombre: `${first} ${last}`,
+      telefono: "",
+      mfaHabilitado: false,
+      password: p1,
     });
 
     console.log("[signup] response", data);
 
     await open_signup_otp_flow(email, { ...data, otpSent: data?.emailSent !== false });
     set_otp_delivery_hint(otpHint, data, "Revisa tu correo y pega aquí el código OTP.");
-
     toast(data?.message || "Te enviamos un OTP a tu correo 📩");
-
-
   } catch (err) {
     console.error(err);
     console.log("[signup] error response", err?.payload || err?.message || err);
+
     const signupEmail = suEmail.value.trim().toLowerCase();
     
-    // Compatibilidad: algunos backends responden con 4xx pero igualmente
-    // indican que la cuenta está pendiente de verificación.
     if (is_pending_verification_response(err?.payload || {}) && signupEmail) {
       await open_signup_otp_flow(signupEmail, err?.payload || {});
       set_otp_delivery_hint(
@@ -455,21 +459,29 @@ async function handle_create_account() {
     if (err?.status === 409) {
       try {
         set_signup_hint("La cuenta ya existe. Reenviando OTP...");
-        const resendData = await api_json('/users/resend-verification-otp', {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: suEmail.value.trim().toLowerCase() }),
+        const resendData = await post_json("/users/resend-verification-otp", {
+          email: suEmail.value.trim().toLowerCase(),
         });
         await open_signup_otp_flow(suEmail.value.trim().toLowerCase(), resendData);
-        set_otp_delivery_hint(otpHint, resendData, "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP.");
+        set_otp_delivery_hint(
+          otpHint,
+          resendData,
+          "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP."
+        );
         toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
         return;
       } catch (resendErr) {
         console.error(resendErr);
       }
     }
+
     show_signup_form_step(true);
-    show_signup_error(humanize_error(err, `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`));
+    show_signup_error(
+      humanize_error(
+        err,
+        `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`
+      )
+    );
   } finally {
     signupSubmitting = false;
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
@@ -486,11 +498,7 @@ async function handle_resend_signup_otp() {
 
     set_button_loading(btnResendSignupOtp, "Reenviando...", "Reenviar OTP", true);
 
-    const data = await api_json('/users/resend-verification-otp', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
+    const data = await post_json("/users/resend-verification-otp", { email });
 
     pendingEmail = email;
     set_otp_delivery_hint(otpHint, data, "Te reenviamos el OTP. Revisa tu correo.");
@@ -512,19 +520,13 @@ async function handle_verify_otp() {
 
     set_button_loading(btnVerifyOtp, "Verificando...", "Verificar", true);
 
-    const verifyData = await api_json('/users/verify-email', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: pendingEmail, otp }),
-    });
-
+    const verifyData = await post_json("/users/verify-email", { email: pendingEmail, otp });
     console.log("[signup] verify success", verifyData);
 
     pendingEmail = "";
     signupVerificationLocked = false;
     toast("Cuenta activada ✅");
     close_signup(true);
-
   } catch (err) {
     console.error(err);
     toast(humanize_error(err, "Error de red"));
@@ -563,6 +565,7 @@ function normalize_block_to_item(block) {
     raw: block,
   };
 }
+
 function load_items() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -575,7 +578,6 @@ function load_items() {
 function save_items(items) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
-
 
 function current_items() {
   const q = state.query.trim().toLowerCase();
@@ -622,9 +624,7 @@ function render_detail(item) {
       </div>
     `;
 
-    detailEl.querySelector("#btnStartTotpSetup")?.addEventListener("click", () => {
-      start_totp_setup();
-    });
+    detailEl.querySelector("#btnStartTotpSetup")?.addEventListener("click", start_totp_setup);
     detailEl.querySelector("#btnConfirmTotp")?.addEventListener("click", () => {
       const code = String(detailEl.querySelector("#totpCodeInput")?.value || "").trim();
       confirm_totp_setup(code);
@@ -685,6 +685,7 @@ async function ensure_security_context() {
   if (!state.security) state.security = {};
   const user = await fetch_current_user_profile();
   if (!user?.id) return null;
+
   state.security.userId = user.id;
   state.security.mfaHabilitado = Boolean(user.mfaHabilitado);
   state.security.mfaMetodo = user.mfaMetodo || "none";
@@ -697,11 +698,7 @@ async function start_totp_setup() {
   if (!user?.id) return toast("No se pudo cargar tu perfil de usuario");
 
   try {
-    const data = await api_json(`/users/${user.id}/mfa/totp/enroll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const data = await post_json(`/users/${user.id}/mfa/totp/enroll`, {});
     state.security.enrollment = {
       secret: data?.secret || "",
       otpauthUri: data?.otpauthUri || "",
@@ -721,11 +718,7 @@ async function confirm_totp_setup(code) {
   if (!user?.id) return toast("No se pudo cargar tu perfil de usuario");
 
   try {
-    const data = await api_json(`/users/${user.id}/mfa/totp/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigo: code }),
-    });
+    const data = await post_json(`/users/${user.id}/mfa/totp/confirm`, { codigo: code });
     state.security.enrollment = null;
     state.security.mfaHabilitado = Boolean(data?.user?.mfaHabilitado);
     state.security.mfaMetodo = data?.user?.mfaMetodo || "none";
@@ -739,6 +732,7 @@ async function confirm_totp_setup(code) {
 
 function render() {
   if (!listEl) return;
+
   const rows = current_items();
   listEl.innerHTML = rows.map(i => `
     <button class="list-item" data-id="${i.id}">
@@ -756,25 +750,27 @@ function render() {
 async function refresh_blockchain_panel() {
   try {
     const [status, chain] = await Promise.all([
-      api_json('/audit/status'),
-      api_json('/audit/chain')
+      api_json("/audit/status"),
+      api_json("/audit/chain")
     ]);
 
     const ledgerBlocks = (chain?.cadena || []).map(normalize_block_to_item);
     state.items = [
-      ...state.items.filter(i => i.view !== 'ledger'),
+      ...state.items.filter(i => i.view !== "ledger"),
       ...ledgerBlocks,
     ];
+
     save_items(state.items);
 
-    if (detailEl && state.view === 'ledger') {
+    if (detailEl && state.view === "ledger") {
+      const lastHash = ledgerBlocks.length ? short_hash(ledgerBlocks[ledgerBlocks.length - 1].raw.hash) : "-";
       detailEl.innerHTML = `
         <div class="detail-card">
           <h2>Estado blockchain</h2>
-          <p><b>Válida:</b> ${status.valida ? 'Sí ✅' : 'No ❌'}</p>
+          <p><b>Válida:</b> ${status.valida ? "Sí ✅" : "No ❌"}</p>
           <p><b>Longitud:</b> ${status.longitud}</p>
           <p><b>Dificultad:</b> ${status.dificultad}</p>
-          <p><b>Último hash:</b> <code>${ledgerBlocks.length ? short_hash(ledgerBlocks[ledgerBlocks.length - 1].raw.hash) : '-'}</code></p>
+          <p><b>Último hash:</b> <code>${lastHash}</code></p>
         </div>
       `;
     }
@@ -790,8 +786,10 @@ async function refresh_blockchain_panel() {
 async function go_to_dashboard() {
   hide(landing);
   show(dashboardApp);
-  state.view = 'ledger';
-  navItems.forEach(n => n.classList.toggle('active', n.dataset.view === state.view));
+
+  state.view = "ledger";
+  navItems.forEach(n => n.classList.toggle("active", n.dataset.view === state.view));
+
   await ensure_security_context().catch(() => null);
   await refresh_blockchain_panel().catch(() => {});
   render();
@@ -804,10 +802,29 @@ function go_to_landing() {
 
 function preload_login_identifier() {
   const saved = localStorage.getItem("cryptolock_last_login");
-  if (saved && liEmail) {
-    liEmail.value = saved;
-    if (liRemember) liRemember.checked = true;
+  if (!saved || !liEmail) return;
+
+  liEmail.value = saved;
+  if (liRemember) liRemember.checked = true;
+}
+
+function valid_login_identifier(value) {
+  const v = String(value || "").trim();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const phoneRegex = /^\+?\d{7,15}$/;
+  return emailRegex.test(v) || phoneRegex.test(v.replace(/[\s()-]/g, ""));
+}
+
+function persist_login_identifier(loginIdentifier) {
+  if (liRemember?.checked) {
+    localStorage.setItem("cryptolock_last_login", loginIdentifier);
+  } else {
+    localStorage.removeItem("cryptolock_last_login");
   }
+}
+
+function set_active_nav(button) {
+  navItems.forEach(n => n.classList.toggle("active", n === button));
 }
 
 // =========================
@@ -815,7 +832,7 @@ function preload_login_identifier() {
 // =========================
 btnSignup?.addEventListener("click", open_signup);
 btnCloseSignup?.addEventListener("click", close_signup);
-signupBackdrop?.addEventListener("click", e => e.target === signupBackdrop && close_signup());
+signupBackdrop?.addEventListener("click", (e) => e.target === signupBackdrop && close_signup());
 
 btnCreateAccount?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -824,7 +841,6 @@ btnCreateAccount?.addEventListener("click", (e) => {
 btnVerifyOtp?.addEventListener("click", handle_verify_otp);
 btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
 
-// Permite enviar con Enter en los campos de registro.
 [suFirstName, suLastName, suEmail, suPassword, suPassword2].forEach((field) => {
   field?.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
@@ -834,7 +850,6 @@ btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
   });
 });
 
-// Permite verificar OTP con Enter.
 suOtp?.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
   e.preventDefault();
@@ -843,14 +858,14 @@ suOtp?.addEventListener("keydown", (e) => {
 
 btnEnter?.addEventListener("click", open_login);
 
-
 btnAbout?.addEventListener("click", () => {
   if (aboutBox) aboutBox.classList.toggle("hidden");
 });
+
 btnCloseLogin?.addEventListener("click", close_login);
 btnCloseLoginOtp?.addEventListener("click", close_login_otp);
-loginBackdrop?.addEventListener("click", e => e.target === loginBackdrop && close_login());
-loginOtpBackdrop?.addEventListener("click", e => e.target === loginOtpBackdrop && close_login_otp());
+loginBackdrop?.addEventListener("click", (e) => e.target === loginBackdrop && close_login());
+loginOtpBackdrop?.addEventListener("click", (e) => e.target === loginOtpBackdrop && close_login_otp());
 
 btnTogglePwd?.addEventListener("click", () => {
   const isPwd = liPassword.type === "password";
@@ -858,16 +873,9 @@ btnTogglePwd?.addEventListener("click", () => {
   btnTogglePwd.textContent = isPwd ? "Ocultar" : "Mostrar";
 });
 
-function valid_login_identifier(value) {
-  const v = String(value || "").trim();
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const phoneRegex = /^\+?\d{7,15}$/;
-  return emailRegex.test(v) || phoneRegex.test(v.replace(/[\s()-]/g, ""));
-}
-
-// Submit (paso 1): validar y pedir verificación TOTP
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
+
   const loginIdentifier = liEmail?.value?.trim() || "";
   const pwd = liPassword?.value || "";
 
@@ -880,20 +888,15 @@ loginForm?.addEventListener("submit", async (e) => {
     return toast("Por ahora el login TOTP solo admite correo electrónico");
   }
 
-  if (liRemember?.checked) {
-    localStorage.setItem("cryptolock_last_login", loginIdentifier);
-  } else {
-    localStorage.removeItem("cryptolock_last_login");
-  }
+  persist_login_identifier(loginIdentifier);
 
   const submitBtn = loginForm.querySelector('button[type="submit"]');
   set_button_loading(submitBtn, "Verificando...", "Ingresar", true);
 
   try {
-    const data = await api_json('/auth/login/request-otp', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: loginIdentifier.toLowerCase(), password: pwd }),
+    const data = await post_json("/auth/login/request-otp", {
+      email: loginIdentifier.toLowerCase(),
+      password: pwd,
     });
 
     const requiresEmailVerification = Boolean(
@@ -922,9 +925,9 @@ loginForm?.addEventListener("submit", async (e) => {
     const loginPayload = err?.payload || {};
     const loginDetail = String(loginPayload?.detail || err?.message || "").toLowerCase();
     const shouldOpenVerification = Boolean(
-      is_pending_verification_response(loginPayload) ||
-      loginDetail.includes("no está verificada") ||
-      (loginDetail.includes("verific") && loginDetail.includes("correo"))
+      is_pending_verification_response(loginPayload)
+      || loginDetail.includes("no está verificada")
+      || (loginDetail.includes("verific") && loginDetail.includes("correo"))
     );
 
     if (shouldOpenVerification && loginIdentifier) {
@@ -939,7 +942,6 @@ loginForm?.addEventListener("submit", async (e) => {
   }
 });
 
-// Submit OTP (paso 2)
 loginOtpForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
@@ -947,15 +949,13 @@ loginOtpForm?.addEventListener("submit", async (e) => {
   if (!pendingLoginIdentifier) return toast("No hay inicio de sesión pendiente");
   if (!/^\d{6}$/.test(otp)) return toast("Ingresa un código TOTP de 6 dígitos");
 
-
   const submitBtn = loginOtpForm.querySelector('button[type="submit"]');
   set_button_loading(submitBtn, "Verificando...", "Verificar TOTP", true);
 
   try {
-    const data = await api_json('/auth/login/verify-otp', {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: pendingLoginIdentifier, otp }),
+    const data = await post_json("/auth/login/verify-otp", {
+      email: pendingLoginIdentifier,
+      otp,
     });
 
     toast(data?.message || "Acceso verificado ✅");
@@ -972,46 +972,47 @@ loginOtpForm?.addEventListener("submit", async (e) => {
 });
 
 navItems.forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.view = btn.dataset.view || 'inbox';
+  btn.addEventListener("click", () => {
+    state.view = btn.dataset.view || "inbox";
     state.selectedId = null;
-    navItems.forEach(n => n.classList.toggle('active', n === btn));
-    if (state.view === 'ledger') {
+    set_active_nav(btn);
+
+    if (state.view === "ledger") {
       refresh_blockchain_panel().finally(render);
       return;
     }
+
     render();
   });
 });
 
-listEl?.addEventListener('click', (e) => {
-  const row = e.target.closest('[data-id]');
+listEl?.addEventListener("click", (e) => {
+  const row = e.target.closest("[data-id]");
   if (!row) return;
   state.selectedId = row.dataset.id;
   render();
 });
 
-searchEl?.addEventListener('input', () => {
-  state.query = searchEl.value || '';
+searchEl?.addEventListener("input", () => {
+  state.query = searchEl.value || "";
   render();
 });
 
-btnRefresh?.addEventListener('click', () => {
-  if (state.view === 'ledger') {
+btnRefresh?.addEventListener("click", () => {
+  if (state.view === "ledger") {
     refresh_blockchain_panel().finally(render);
     return;
   }
+
   render();
 });
 
-// Ir a crear cuenta desde login
 btnGoSignup?.addEventListener("click", (e) => {
   e.preventDefault();
   close_login();
   open_signup();
 });
 
-// Cerrar con ESC
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   close_signup();
@@ -1025,3 +1026,10 @@ document.addEventListener("keydown", (e) => {
 state.items = load_items();
 preload_login_identifier();
 go_to_landing();
+
+void modalBackdrop;
+void btnCompose;
+void btnCloseModal;
+void btnSendAction;
+void actionTypeEl;
+void actionDescEl;
