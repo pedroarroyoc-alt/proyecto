@@ -100,7 +100,7 @@ let pendingEmail = "";
 let pendingLoginIdentifier = "";
 let currentUserEmail = "";
 let signupVerificationLocked = false;
-
+let signupSubmitting = false;
 // =========================
 // Helpers UI
 // =========================
@@ -293,12 +293,19 @@ async function open_signup_otp_flow(email, payload = null) {
   }
 }
 
+
 function is_pending_verification_response(payload = {}) {
   const detail = payload?.detail;
   const detailText = typeof detail === "string"
     ? detail.toLowerCase()
-    : "";
+    : String(detail || "").toLowerCase();
   const messageText = String(payload?.message || "").toLowerCase();
+  const combinedText = `${detailText} ${messageText}`;
+  const mentionsOtpPending = combinedText.includes("otp") && (
+    combinedText.includes("enviado") ||
+    combinedText.includes("pendiente") ||
+    combinedText.includes("verifica")
+  );
 
   return Boolean(
     payload?.requiresEmailVerification ??
@@ -309,7 +316,7 @@ function is_pending_verification_response(payload = {}) {
     detailText.includes("verific") && detailText.includes("correo")
   ) || (
     messageText.includes("verific") && messageText.includes("correo")
-  );
+  ) || mentionsOtpPending;
 }
 
 function is_gmail(email) {
@@ -381,6 +388,9 @@ function fmt_ts(value = "") {
 // Crear cuenta (Paso 1)
 // =========================
 async function handle_create_account() {
+  if (signupSubmitting) return;
+  signupSubmitting = true;
+
   try {
     console.log("[signup] submit");
     set_signup_hint("Validando datos...");
@@ -461,6 +471,7 @@ async function handle_create_account() {
     show_signup_form_step(true);
     show_signup_error(humanize_error(err, `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`));
   } finally {
+    signupSubmitting = false;
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
   }
 }
@@ -814,9 +825,10 @@ btnVerifyOtp?.addEventListener("click", handle_verify_otp);
 btnResendSignupOtp?.addEventListener("click", handle_resend_signup_otp);
 
 // Permite enviar con Enter en los campos de registro.
-[suFirstName, suLastName, suEmail, suPassword, suPassword2, suTerms].forEach((field) => {
+[suFirstName, suLastName, suEmail, suPassword, suPassword2].forEach((field) => {
   field?.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
+    if (signupVerificationLocked) return;
     e.preventDefault();
     handle_create_account();
   });
