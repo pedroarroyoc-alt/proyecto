@@ -102,6 +102,9 @@ let pendingLoginIdentifier = "";
 let currentUserEmail = "";
 let signupVerificationLocked = false;
 let signupSubmitting = false;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^\+?\d{7,15}$/;
+const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
 
 // =========================
 // Helpers UI
@@ -121,6 +124,22 @@ function hide(el) {
 function set_text(el, value) {
   if (!el) return;
   el.textContent = value;
+}
+
+function normalize_email(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function is_email_identifier(value) {
+  return EMAIL_REGEX.test(String(value || "").trim());
+}
+
+function backend_connection_hint() {
+  return `No se pudo conectar con el backend (${API_BASE}). Verifica que el servidor esté encendido y con CORS habilitado.`;
+}
+
+function get_signup_email_input() {
+  return normalize_email(suEmail?.value);
 }
 
 function clear_totp_guide() {
@@ -170,6 +189,7 @@ function open_login_totp(identifier, enrollment = null) {
 }
 
 function close_login_otp() {
+  pendingLoginIdentifier = "";
   if (loginOtpBackdrop) loginOtpBackdrop.style.display = "";
   hide(loginOtpBackdrop);
   clear_totp_guide();
@@ -224,6 +244,7 @@ function reset_signup_modal() {
   signupVerificationLocked = false;
 
   set_text(signupTitle, "Crear una cuenta");
+  set_signup_hint(DEFAULT_SIGNUP_HINT);
   set_text(otpHint, "");
 
   show(stepForm);
@@ -234,6 +255,8 @@ function reset_signup_modal() {
 
   if (stepOtp) stepOtp.style.display = "";
   if (suOtp) suOtp.value = "";
+  if (suPassword) suPassword.value = "";
+  if (suPassword2) suPassword2.value = "";
   if (suTerms) suTerms.checked = true;
 }
 
@@ -257,17 +280,19 @@ function show_otp_step(email) {
 }
 
 function show_signup_form_step(clearPending = false) {
+  signupVerificationLocked = false;
   if (clearPending) {
     pendingEmail = "";
-    signupVerificationLocked = false;
   }
 
   set_text(signupTitle, "Crear una cuenta");
+  set_text(otpHint, "");
   show(stepForm);
   hide(stepOtp);
   show(btnCreateAccount);
   hide(btnVerifyOtp);
   hide(btnResendSignupOtp);
+  if (stepOtp) stepOtp.style.display = "";
 }
 
 async function post_json(path, body = {}) {
@@ -278,9 +303,18 @@ async function post_json(path, body = {}) {
   });
 }
 
-async function open_signup_otp_flow(email, payload = null) {
-  const normalizedEmail = String(email || "").trim().toLowerCase();
-  if (!normalizedEmail) return;
+async function resend_verification_otp(email) {
+  return post_json("/users/resend-verification-otp", { email: normalize_email(email) });
+}
+
+async function open_signup_otp_flow(email, payload = null, options = {}) {
+  const normalizedEmail = normalize_email(email);
+  if (!normalizedEmail) return null;
+  const {
+    hintMessage = "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP.",
+    resendHint = "Te reenviamos el OTP. Revisa tu correo.",
+    resendErrorHint = "Cuenta pendiente de verificación. Usa 'Reenviar OTP' para solicitar un nuevo código.",
+  } = options;
 
   close_login();
   open_signup();
@@ -288,25 +322,18 @@ async function open_signup_otp_flow(email, payload = null) {
   show_otp_step(normalizedEmail);
 
   if (payload) {
-    set_otp_delivery_hint(
-      otpHint,
-      payload,
-      "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP."
-    );
-    return;
+    set_otp_delivery_hint(otpHint, payload, hintMessage);
+    return payload;
   }
 
   try {
-    const resendData = await post_json("/users/resend-verification-otp", { email: normalizedEmail });
-    set_otp_delivery_hint(otpHint, resendData, "Te reenviamos el OTP. Revisa tu correo.");
-    toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
+    const resendData = await resend_verification_otp(normalizedEmail);
+    set_otp_delivery_hint(otpHint, resendData, resendHint);
+    return resendData;
   } catch (err) {
     console.warn("No se pudo reenviar OTP automáticamente", err);
-    set_otp_delivery_hint(
-      otpHint,
-      null,
-      "Cuenta pendiente de verificación. Usa 'Reenviar OTP' para solicitar un nuevo código."
-    );
+    set_otp_delivery_hint(otpHint, null, resendErrorHint);
+    return null;
   }
 }
 
@@ -336,11 +363,11 @@ function is_pending_verification_response(payload = {}) {
 }
 
 function is_gmail(email) {
-  return String(email || "").toLowerCase().endsWith("@gmail.com");
+  return normalize_email(email).endsWith("@gmail.com");
 }
 
 function looks_like_gmail_typo(email) {
-  return String(email || "").toLowerCase().endsWith("@gamil.com");
+  return normalize_email(email).endsWith("@gamil.com");
 }
 
 // =========================
@@ -384,7 +411,7 @@ function humanize_error(err, fallback) {
 
   const normalized = message.toLowerCase();
   if (normalized.includes("failed to fetch") || normalized.includes("networkerror")) {
-    return `No se pudo conectar con el backend (${API_BASE}). Verifica que el servidor esté encendido y con CORS habilitado.`;
+    return backend_connection_hint();
   }
 
   return message;
@@ -412,7 +439,7 @@ async function handle_create_account() {
 
     const first = suFirstName.value.trim();
     const last = suLastName.value.trim();
-    const email = suEmail.value.trim().toLowerCase();
+    const email = get_signup_email_input();
     const p1 = suPassword.value;
     const p2 = suPassword2.value;
     const okTerms = suTerms.checked;
@@ -438,21 +465,23 @@ async function handle_create_account() {
 
     console.log("[signup] response", data);
 
-    await open_signup_otp_flow(email, { ...data, otpSent: data?.emailSent !== false });
-    set_otp_delivery_hint(otpHint, data, "Revisa tu correo y pega aquí el código OTP.");
+    await open_signup_otp_flow(
+      email,
+      { ...data, otpSent: data?.emailSent !== false },
+      { hintMessage: "Revisa tu correo y pega aquí el código OTP." }
+    );
     toast(data?.message || "Te enviamos un OTP a tu correo 📩");
   } catch (err) {
     console.error(err);
     console.log("[signup] error response", err?.payload || err?.message || err);
 
-    const signupEmail = suEmail.value.trim().toLowerCase();
+    const signupEmail = get_signup_email_input();
     
     if (is_pending_verification_response(err?.payload || {}) && signupEmail) {
-      await open_signup_otp_flow(signupEmail, err?.payload || {});
-      set_otp_delivery_hint(
-        otpHint,
-        err?.payload,
-        "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP."
+      await open_signup_otp_flow(
+        signupEmail,
+        err?.payload || {},
+        { hintMessage: "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP." }
       );
       toast(err?.payload?.message || err?.payload?.detail || "Te enviamos un OTP de verificación 📩");
       return;
@@ -461,14 +490,11 @@ async function handle_create_account() {
     if (err?.status === 409) {
       try {
         set_signup_hint("La cuenta ya existe. Reenviando OTP...");
-        const resendData = await post_json("/users/resend-verification-otp", {
-          email: suEmail.value.trim().toLowerCase(),
-        });
-        await open_signup_otp_flow(suEmail.value.trim().toLowerCase(), resendData);
-        set_otp_delivery_hint(
-          otpHint,
+        const resendData = await resend_verification_otp(signupEmail);
+        await open_signup_otp_flow(
+          signupEmail,
           resendData,
-          "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP."
+          { hintMessage: "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP." }
         );
         toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
         return;
@@ -481,7 +507,7 @@ async function handle_create_account() {
     show_signup_error(
       humanize_error(
         err,
-        `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`
+        backend_connection_hint()
       )
     );
   } finally {
@@ -495,12 +521,12 @@ async function handle_create_account() {
 // =========================
 async function handle_resend_signup_otp() {
   try {
-    const email = (pendingEmail || suEmail?.value || "").trim().toLowerCase();
+    const email = normalize_email(pendingEmail || suEmail?.value);
     if (!email) return toast("No hay correo para reenviar OTP");
 
     set_button_loading(btnResendSignupOtp, "Reenviando...", "Reenviar OTP", true);
 
-    const data = await post_json("/users/resend-verification-otp", { email });
+    const data = await resend_verification_otp(email);
 
     pendingEmail = email;
     set_otp_delivery_hint(otpHint, data, "Te reenviamos el OTP. Revisa tu correo.");
@@ -812,9 +838,7 @@ function preload_login_identifier() {
 
 function valid_login_identifier(value) {
   const v = String(value || "").trim();
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const phoneRegex = /^\+?\d{7,15}$/;
-  return emailRegex.test(v) || phoneRegex.test(v.replace(/[\s()-]/g, ""));
+  return is_email_identifier(v) || PHONE_REGEX.test(v.replace(/[\s()-]/g, ""));
 }
 
 function persist_login_identifier(loginIdentifier) {
@@ -879,14 +903,14 @@ loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   const loginIdentifier = liEmail?.value?.trim() || "";
+  const normalizedLoginIdentifier = normalize_email(loginIdentifier);
   const pwd = liPassword?.value || "";
 
   if (!loginIdentifier) return toast("Ingresa tu correo o teléfono");
   if (!valid_login_identifier(loginIdentifier)) return toast("Formato inválido: usa correo o teléfono");
   if (!pwd) return toast("Ingresa tu contraseña");
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(loginIdentifier)) {
+  if (!is_email_identifier(loginIdentifier)) {
     return toast("Por ahora el login TOTP solo admite correo electrónico");
   }
 
@@ -897,7 +921,7 @@ loginForm?.addEventListener("submit", async (e) => {
 
   try {
     const data = await post_json("/auth/login/request-otp", {
-      email: loginIdentifier.toLowerCase(),
+      email: normalizedLoginIdentifier,
       password: pwd,
     });
 
@@ -909,14 +933,17 @@ loginForm?.addEventListener("submit", async (e) => {
 
     if (requiresEmailVerification) {
       toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
-      await open_signup_otp_flow(loginIdentifier.toLowerCase(), data);
-      set_otp_delivery_hint(otpHint, data, "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP.");
+      await open_signup_otp_flow(
+        normalizedLoginIdentifier,
+        data,
+        { hintMessage: "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP." }
+      );
       return;
     }
 
     if (mfaMethod === "totp" && (mfaRequired || data?.totpEnrollment)) {
       toast("Ingresa el código TOTP de tu app autenticadora");
-      open_login_totp(loginIdentifier.toLowerCase(), data?.totpEnrollment || null);
+      open_login_totp(normalizedLoginIdentifier, data?.totpEnrollment || null);
       return;
     }
 
@@ -932,8 +959,12 @@ loginForm?.addEventListener("submit", async (e) => {
       || (loginDetail.includes("verific") && loginDetail.includes("correo"))
     );
 
-    if (shouldOpenVerification && loginIdentifier) {
-      await open_signup_otp_flow(loginIdentifier.toLowerCase(), loginPayload);
+    if (shouldOpenVerification && normalizedLoginIdentifier) {
+      await open_signup_otp_flow(
+        normalizedLoginIdentifier,
+        loginPayload,
+        { hintMessage: "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP." }
+      );
       toast(loginPayload?.message || "Tu cuenta está pendiente de verificación. Ingresa el OTP.");
       return;
     }
@@ -963,7 +994,6 @@ loginOtpForm?.addEventListener("submit", async (e) => {
     toast(data?.message || "Acceso verificado ✅");
     currentUserEmail = data?.user?.email || pendingLoginIdentifier;
     close_login_otp();
-    pendingLoginIdentifier = "";
     go_to_dashboard();
   } catch (err) {
     console.error(err);
@@ -981,6 +1011,11 @@ navItems.forEach((btn) => {
 
     if (state.view === "ledger") {
       refresh_blockchain_panel().finally(render);
+      return;
+    }
+
+    if (state.view === "security") {
+      ensure_security_context().finally(render);
       return;
     }
 
