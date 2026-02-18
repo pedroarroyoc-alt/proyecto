@@ -36,7 +36,8 @@ const signupTitle = document.getElementById("signupTitle");
 const signupHint = document.getElementById("suHint");
 
 const stepForm = document.getElementById("signupStepForm");
-const stepOtp = document.getElementById("signupStepOtp");
+const signupOtpBackdrop = document.getElementById("signupOtpBackdrop");
+const btnCloseSignupOtp = document.getElementById("btnCloseSignupOtp");
 
 const suFirstName = document.getElementById("suFirstName");
 const suLastName = document.getElementById("suLastName");
@@ -105,7 +106,7 @@ let signupSubmitting = false;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
-const APP_BUILD = "otpfix5";
+const APP_BUILD = "otpfix6";
 console.info(`[cryptolock-ui] build ${APP_BUILD}`);
 
 // =========================
@@ -151,6 +152,7 @@ function clear_totp_guide() {
 }
 
 function open_signup() {
+  close_signup_otp(true);
   show(signupBackdrop);
   reset_signup_modal();
 }
@@ -209,12 +211,6 @@ function close_signup(force = false) {
     return;
   }
 
-  if (!isForced && is_signup_otp_step_active()) {
-    toast("Primero verifica el código OTP enviado a tu correo.");
-    setTimeout(() => suOtp?.focus(), 0);
-    return;
-  }
-
   if (signupBackdrop) signupBackdrop.style.display = "";
   hide(signupBackdrop);
 }
@@ -246,20 +242,38 @@ function set_otp_delivery_hint(targetEl, data, fallback) {
     : fallback;
 }
 
+// Reajuste del flujo de registro: OTP en modal dedicado.
+function close_signup_otp(force = false) {
+  const isForced = typeof force === "boolean" ? force : false;
+  if (!isForced && signupSubmitting) {
+    toast("Espera un momento, estamos creando tu cuenta...");
+    return;
+  }
+
+  signupVerificationLocked = false;
+  pendingEmail = "";
+
+  if (signupOtpBackdrop) signupOtpBackdrop.style.display = "";
+  hide(signupOtpBackdrop);
+}
+
 function reset_signup_modal() {
   pendingEmail = "";
   signupVerificationLocked = false;
 
   set_text(signupTitle, "Crear una cuenta");
   set_signup_hint(DEFAULT_SIGNUP_HINT);
-  show_signup_form_step(false, { force: true });
+  set_text(otpHint, "Revisa tu correo y pega aqui el codigo OTP.");
 
-
-  if (stepOtp) stepOtp.style.display = "";
+  if (suFirstName) suFirstName.value = "";
+  if (suLastName) suLastName.value = "";
+  if (suEmail) suEmail.value = "";
   if (suOtp) suOtp.value = "";
   if (suPassword) suPassword.value = "";
   if (suPassword2) suPassword2.value = "";
   if (suTerms) suTerms.checked = true;
+
+  show_signup_form_step(false, { force: true });
 }
 
 function show_otp_step(email) {
@@ -267,16 +281,13 @@ function show_otp_step(email) {
   pendingEmail = email;
   signupVerificationLocked = true;
 
-  set_text(signupTitle, "Verificar correo");
-  show(signupBackdrop);
-  if (signupBackdrop) signupBackdrop.style.display = "grid";
-  hide(stepForm);
-  show(stepOtp);
-  if (stepOtp) stepOtp.style.display = "block";
-  hide(btnCreateAccount);
+  hide(signupBackdrop);
+  show(signupOtpBackdrop);
+  if (signupOtpBackdrop) signupOtpBackdrop.style.display = "grid";
+  if (suOtp) suOtp.value = "";
   show(btnVerifyOtp);
   show(btnResendSignupOtp);
-  set_text(otpHint, "Revisa tu correo y pega aquí el código OTP.");
+  set_text(otpHint, "Revisa tu correo y pega aqui el codigo OTP.");
 
   setTimeout(() => suOtp?.focus(), 0);
 }
@@ -293,13 +304,15 @@ function show_signup_form_step(clearPending = false, options = {}) {
   }
 
   set_text(signupTitle, "Crear una cuenta");
-  set_text(otpHint, "");
+  set_signup_hint(DEFAULT_SIGNUP_HINT);
   show(stepForm);
-  hide(stepOtp);
   show(btnCreateAccount);
-  hide(btnVerifyOtp);
-  hide(btnResendSignupOtp);
-  if (stepOtp) stepOtp.style.display = "";
+
+  if (signupBackdrop) signupBackdrop.style.display = "grid";
+  show(signupBackdrop);
+
+  if (signupOtpBackdrop) signupOtpBackdrop.style.display = "";
+  hide(signupOtpBackdrop);
 }
 
 async function post_json(path, body = {}) {
@@ -578,6 +591,7 @@ async function handle_verify_otp() {
     pendingEmail = "";
     signupVerificationLocked = false;
     toast("Cuenta activada ✅");
+    close_signup_otp(true);
     close_signup(true);
   } catch (err) {
     console.error(err);
@@ -883,6 +897,8 @@ function set_active_nav(button) {
 btnSignup?.addEventListener("click", open_signup);
 btnCloseSignup?.addEventListener("click", close_signup);
 signupBackdrop?.addEventListener("click", (e) => e.target === signupBackdrop && close_signup());
+btnCloseSignupOtp?.addEventListener("click", () => close_signup_otp());
+signupOtpBackdrop?.addEventListener("click", (e) => e.target === signupOtpBackdrop && close_signup_otp());
 
 btnCreateAccount?.addEventListener("click", (e) => {
   e.preventDefault();
@@ -1077,6 +1093,7 @@ btnGoSignup?.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   close_signup();
+  close_signup_otp();
   close_login();
   close_login_otp();
 });

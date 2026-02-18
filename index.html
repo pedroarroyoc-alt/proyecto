@@ -176,22 +176,32 @@
         </div>
       </div>
 
-      <!-- PASO 2 (OTP) -->
-      <div id="signupStepOtp" class="hidden">
-        <p class="form-hint" id="otpHint">
-          Ingresa el código OTP para activar tu cuenta.
-        </p>
-
-        <label>Código OTP</label>
-        <input id="suOtp" type="text" placeholder="Ej: 893615" />
-      </div>
-
     </div>
 
     <div class="modal-footer">
       <button class="btn" id="btnCreateAccount">Crear cuenta</button>
-      <button class="btn hidden" id="btnVerifyOtp">Verificar</button>
-      <button class="ghost hidden" id="btnResendSignupOtp" type="button">Reenviar OTP</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Verificación OTP de registro -->
+<div class="modal-backdrop hidden" id="signupOtpBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="signupOtpTitle">Verificar correo</h3>
+      <button class="ghost" id="btnCloseSignupOtp" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <p class="form-hint" id="otpHint">Revisa tu correo y pega aquí el código OTP.</p>
+
+      <label>Código OTP</label>
+      <input id="suOtp" type="text" placeholder="Ej: 893615" />
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" id="btnVerifyOtp" type="button">Verificar</button>
+      <button class="ghost" id="btnResendSignupOtp" type="button">Reenviar OTP</button>
     </div>
   </div>
 </div>
@@ -278,7 +288,7 @@
   </div>
 
   <!-- JS: lógica del frontend (al final para asegurar que cargue todos los modales) -->
-  <script src="./app.js?v=20260218-otpfix5"></script>
+  <script src="./app.js?v=20260218-otpfix6"></script>
 
 </body>
 </html>
