@@ -99,6 +99,7 @@ const state = {
 let pendingEmail = "";
 let pendingLoginIdentifier = "";
 let currentUserEmail = "";
+let signupVerificationLocked = false;
 
 // =========================
 // Helpers UI
@@ -170,11 +171,7 @@ function close_login_otp() {
 }
 
 function is_signup_otp_step_active() {
-  return Boolean(
-    pendingEmail &&
-    stepOtp &&
-    !stepOtp.classList.contains("hidden")
-  );
+  return Boolean(signupVerificationLocked);
 }
 
 function close_signup(force = false) {
@@ -215,6 +212,7 @@ function set_otp_delivery_hint(targetEl, data, fallback) {
 }
 function reset_signup_modal() {
   pendingEmail = "";
+  signupVerificationLocked = false;
   if (signupTitle) signupTitle.textContent = "Crear una cuenta";
   if (otpHint) otpHint.textContent = "";
 
@@ -232,6 +230,7 @@ function reset_signup_modal() {
 function show_otp_step(email) {
   console.log("[signup] open modal OTP", { email });
   pendingEmail = email;
+  signupVerificationLocked = true;
   if (signupTitle) signupTitle.textContent = "Verificar correo";
   show(signupBackdrop);
   if (signupBackdrop) signupBackdrop.style.display = "grid";
@@ -245,7 +244,11 @@ function show_otp_step(email) {
   setTimeout(() => suOtp?.focus(), 0);
 }
 
-function show_signup_form_step() {
+function show_signup_form_step(clearPending = false) {
+  if (clearPending) {
+    pendingEmail = "";
+    signupVerificationLocked = false;
+  }
   if (signupTitle) signupTitle.textContent = "Crear una cuenta";
   show(stepForm);
   hide(stepOtp);
@@ -397,8 +400,7 @@ async function handle_create_account() {
     if (p1 !== p2) return show_signup_error("Las contraseñas no coinciden");
     if (!okTerms) return show_signup_error("Acepta los términos");
 
-     show_otp_step(email);
-    if (otpHint) otpHint.textContent = "Creando cuenta y enviando código OTP...";
+    set_signup_hint("Creando cuenta y enviando código OTP...");
 
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
@@ -456,7 +458,7 @@ async function handle_create_account() {
         console.error(resendErr);
       }
     }
-    show_signup_form_step();
+    show_signup_form_step(true);
     show_signup_error(humanize_error(err, `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`));
   } finally {
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
@@ -507,6 +509,8 @@ async function handle_verify_otp() {
 
     console.log("[signup] verify success", verifyData);
 
+    pendingEmail = "";
+    signupVerificationLocked = false;
     toast("Cuenta activada ✅");
     close_signup(true);
 
@@ -998,6 +1002,7 @@ btnGoSignup?.addEventListener("click", (e) => {
 // Cerrar con ESC
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  close_signup();
   close_login();
   close_login_otp();
 });
