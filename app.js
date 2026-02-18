@@ -473,6 +473,7 @@ async function handle_create_account() {
 
     set_signup_hint("Creando cuenta y enviando código OTP...");
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
+    console.info("[signup] creando cuenta", { endpoint: `${API_BASE}/users/human`, email });
 
     show_otp_step(email);
     set_otp_delivery_hint(
@@ -530,7 +531,9 @@ async function handle_create_account() {
       }
     }
 
-    show_signup_form_step(false);
+    if (!is_signup_otp_step_active()) {
+      show_signup_form_step(false);
+    }
     show_signup_error(
       humanize_error(
         err,
