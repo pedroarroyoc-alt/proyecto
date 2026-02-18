@@ -381,6 +381,18 @@ function is_pending_verification_response(payload = {}) {
   ) || mentionsOtpPending;
 }
 
+function response_mentions_email_verification(payload = {}) {
+  const detailText = String(payload?.detail || "").toLowerCase();
+  const messageText = String(payload?.message || "").toLowerCase();
+  const combinedText = `${detailText} ${messageText}`;
+
+  return (
+    is_pending_verification_response(payload)
+    || combinedText.includes("cuenta") && combinedText.includes("verific")
+    || combinedText.includes("usuario no activo")
+  );
+}
+
 function is_gmail(email) {
   return normalize_email(email).endsWith("@gmail.com");
 }
@@ -971,7 +983,7 @@ loginForm?.addEventListener("submit", async (e) => {
     const mfaRequired = Boolean(data?.mfaRequired ?? data?.mfa_required);
     const mfaMethod = String(data?.mfaMethod ?? data?.mfa_method ?? "").toLowerCase();
 
-    if (requiresEmailVerification) {
+    if (requiresEmailVerification || response_mentions_email_verification(data)) {
       toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
       await open_signup_otp_flow(
         normalizedLoginIdentifier,
@@ -994,9 +1006,10 @@ loginForm?.addEventListener("submit", async (e) => {
     const loginPayload = err?.payload || {};
     const loginDetail = String(loginPayload?.detail || err?.message || "").toLowerCase();
     const shouldOpenVerification = Boolean(
-      is_pending_verification_response(loginPayload)
+      response_mentions_email_verification(loginPayload)
       || loginDetail.includes("no está verificada")
       || (loginDetail.includes("verific") && loginDetail.includes("correo"))
+      || loginDetail.includes("usuario no activo")
     );
 
     if (shouldOpenVerification && normalizedLoginIdentifier) {
