@@ -169,7 +169,21 @@ function close_login_otp() {
   if (loginTotpSecret) loginTotpSecret.textContent = "-";
 }
 
-function close_signup() {
+function is_signup_otp_step_active() {
+  return Boolean(
+    pendingEmail &&
+    stepOtp &&
+    !stepOtp.classList.contains("hidden")
+  );
+}
+
+function close_signup(force = false) {
+  if (!force && is_signup_otp_step_active()) {
+    toast("Primero verifica el código OTP enviado a tu correo.");
+    setTimeout(() => suOtp?.focus(), 0);
+    return;
+  }
+
   if (signupBackdrop) signupBackdrop.style.display = "";
   hide(signupBackdrop);
 }
@@ -494,7 +508,7 @@ async function handle_verify_otp() {
     console.log("[signup] verify success", verifyData);
 
     toast("Cuenta activada ✅");
-    close_signup();
+    close_signup(true);
 
   } catch (err) {
     console.error(err);
