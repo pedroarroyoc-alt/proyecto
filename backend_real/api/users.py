@@ -280,6 +280,7 @@ class UserService:
             "user": self.to_public(user),
             "message": message,
             "emailSent": email_sent,
+            "requiresEmailVerification": True,
         }
 
         if not email_sent and os.getenv("EXPOSE_OTP_IN_RESPONSE", "false").lower() == "true":

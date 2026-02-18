@@ -185,16 +185,20 @@ body {
   min-width: 180px;
 }
 
-.hidden { display: none; }
+.hidden { display: none !important; }
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.35);
 
-  display: none;        
+  display: grid;        
   place-items: center;
   padding: 16px;
+  z-index: 50;
+}
+.modal-backdrop.hidden {
+  display: none !important;
 }
 .modal {
   width: min(520px, 100%);
@@ -359,16 +363,6 @@ select, textarea {
   .landing-left h1{ font-size: 44px; }
 }
 /* =========================
-   FIX: Modal (para que funcione con .hidden)
-   ========================= */
-.modal-backdrop{
-  display: grid; /* antes estaba display:none y nunca aparecía */
-}
-.modal-backdrop.hidden{
-  display: none;
-}
-
-/* =========================
    Landing TOP BAR (nuevo modelo)
    ========================= */
 .topbar-site{
@@ -489,7 +483,6 @@ select, textarea {
   align-items: center;
   gap: 14px;
 }
-.hidden { display: none; }
 /* Inputs del modal (signup) */
 .modal-body input{
   padding: 10px 12px;
@@ -542,8 +535,6 @@ select, textarea {
   color: #555;
 }
 
-/* por si tu .hidden no existe */
-.hidden { display: none !important; }
 /* =========================
    Login modal extras (compatible con tu CSS)
 ========================= */
