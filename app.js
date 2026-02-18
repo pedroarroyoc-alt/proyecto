@@ -231,6 +231,42 @@ function show_otp_step(email) {
   setTimeout(() => suOtp?.focus(), 0);
 }
 
+async function open_signup_otp_flow(email, payload = null) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) return;
+
+  close_login();
+  open_signup();
+  if (suEmail) suEmail.value = normalizedEmail;
+  show_otp_step(normalizedEmail);
+
+  if (payload) {
+    set_otp_delivery_hint(
+      otpHint,
+      payload,
+      "Cuenta pendiente de verificación. Revisa tu correo e ingresa el OTP."
+    );
+    return;
+  }
+
+  try {
+    const resendData = await api_json('/users/resend-verification-otp', {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail }),
+    });
+    set_otp_delivery_hint(otpHint, resendData, "Te reenviamos el OTP. Revisa tu correo.");
+    toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
+  } catch (err) {
+    console.warn("No se pudo reenviar OTP automáticamente", err);
+    set_otp_delivery_hint(
+      otpHint,
+      null,
+      "Cuenta pendiente de verificación. Usa 'Reenviar OTP' para solicitar un nuevo código."
+    );
+  }
+}
+
 function is_pending_verification_response(payload = {}) {
   const detail = payload?.detail;
   const detailText = typeof detail === "string"
@@ -354,11 +390,7 @@ async function handle_create_account() {
 
     console.log("[signup] response", data);
 
-    if (!is_pending_verification_response({ ...data, otpSent: data?.emailSent !== false })) {
-      throw new Error(data?.message || "El backend no indicó verificación OTP para completar el alta.");
-    }
-
-    show_otp_step(email);
+    await open_signup_otp_flow(email, { ...data, otpSent: data?.emailSent !== false });
     set_otp_delivery_hint(otpHint, data, "Revisa tu correo y pega aquí el código OTP.");
 
     toast(data?.message || "Te enviamos un OTP a tu correo 📩");
@@ -372,7 +404,7 @@ async function handle_create_account() {
     // Compatibilidad: algunos backends responden con 4xx pero igualmente
     // indican que la cuenta está pendiente de verificación.
     if (is_pending_verification_response(err?.payload || {}) && signupEmail) {
-      show_otp_step(signupEmail);
+      await open_signup_otp_flow(signupEmail, err?.payload || {});
       set_otp_delivery_hint(
         otpHint,
         err?.payload,
@@ -390,7 +422,7 @@ async function handle_create_account() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: suEmail.value.trim().toLowerCase() }),
         });
-        show_otp_step(suEmail.value.trim().toLowerCase());
+        await open_signup_otp_flow(suEmail.value.trim().toLowerCase(), resendData);
         set_otp_delivery_hint(otpHint, resendData, "Cuenta existente pendiente de verificación. Revisa tu correo e ingresa el OTP.");
         toast(resendData?.message || "Te reenviamos el OTP de verificación 📩");
         return;
@@ -829,10 +861,7 @@ loginForm?.addEventListener("submit", async (e) => {
 
     if (requiresEmailVerification) {
       toast(data?.message || "Tu cuenta aún no está verificada. Te enviamos OTP de verificación.");
-      close_login();
-      open_signup();
-      if (suEmail) suEmail.value = loginIdentifier.toLowerCase();
-      show_otp_step(loginIdentifier.toLowerCase());
+      await open_signup_otp_flow(loginIdentifier.toLowerCase(), data);
       set_otp_delivery_hint(otpHint, data, "Tu cuenta está pendiente de verificación. Revisa tu correo e ingresa el OTP.");
       return;
     }
@@ -846,6 +875,21 @@ loginForm?.addEventListener("submit", async (e) => {
     toast("Esta cuenta no tiene TOTP configurado. Configúralo en Seguridad (MFA).");
   } catch (err) {
     console.error(err);
+
+    const loginPayload = err?.payload || {};
+    const loginDetail = String(loginPayload?.detail || err?.message || "").toLowerCase();
+    const shouldOpenVerification = Boolean(
+      is_pending_verification_response(loginPayload) ||
+      loginDetail.includes("no está verificada") ||
+      (loginDetail.includes("verific") && loginDetail.includes("correo"))
+    );
+
+    if (shouldOpenVerification && loginIdentifier) {
+      await open_signup_otp_flow(loginIdentifier.toLowerCase(), loginPayload);
+      toast(loginPayload?.message || "Tu cuenta está pendiente de verificación. Ingresa el OTP.");
+      return;
+    }
+   
     toast(humanize_error(err, `No se pudo conectar con el backend (${API_BASE})`));
   } finally {
     set_button_loading(submitBtn, "Verificando...", "Ingresar", false);
