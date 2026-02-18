@@ -202,6 +202,11 @@ function is_signup_otp_step_active() {
 function close_signup(force = false) {
   const isForced = typeof force === "boolean" ? force : false;
 
+  if (!isForced && signupSubmitting) {
+    toast("Espera un momento, estamos creando tu cuenta...");
+    return;
+  }
+
   if (!isForced && is_signup_otp_step_active()) {
     toast("Primero verifica el código OTP enviado a tu correo.");
     setTimeout(() => suOtp?.focus(), 0);
@@ -387,7 +392,22 @@ function toast(msg) {
 }
 
 async function api_json(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const controller = new AbortController();
+  const timeoutMs = 15000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Tiempo de espera agotado al conectar con ${API_BASE}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
@@ -454,6 +474,14 @@ async function handle_create_account() {
     set_signup_hint("Creando cuenta y enviando código OTP...");
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
+    show_otp_step(email);
+    set_otp_delivery_hint(
+      otpHint,
+      null,
+      "Estamos creando tu cuenta y enviando el OTP..."
+    );
+    console.info("[signup] creando cuenta", { endpoint: `${API_BASE}/users/human`, email });
+    
     const data = await post_json("/users/human", {
       email,
       nombre: `${first} ${last}`,
@@ -464,11 +492,10 @@ async function handle_create_account() {
 
     console.log("[signup] response", data);
 
-    show_otp_step(email);
-    set_otp_delivery_hint(
-      otpHint,
+    await open_signup_otp_flow(
+      email,
       { ...data, otpSent: data?.emailSent !== false },
-      "Revisa tu correo y pega aquí el código OTP."
+      { hintMessage: "Revisa tu correo y pega aquí el código OTP." }
     );
     toast(data?.message || "Te enviamos un OTP a tu correo 📩");
   } catch (err) {
@@ -503,7 +530,7 @@ async function handle_create_account() {
       }
     }
 
-    show_signup_form_step(true);
+    show_signup_form_step(false);
     show_signup_error(
       humanize_error(
         err,
