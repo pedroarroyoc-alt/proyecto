@@ -1,18 +1,18 @@
 {
   "users": [
     {
-      "id": "08dbbec3-34f2-4460-8e97-364c68bb4b2e",
+      "id": "f03cd0ad-0161-401c-b793-6038e796de8d",
       "email": "pedrocuellar470@gmail.com",
-      "nombre": "Pedro Hubert Arroyo Cuellar",
+      "nombre": "pedro arroyo",
       "telefono": "",
       "estado": "ACTIVO",
       "emailVerificado": true,
       "mfaHabilitado": true,
       "mfaMetodo": "totp",
-      "totpSecret": "4Q6W7LKIUB3AKLUAL5EURWTKKCIX6ALR",
+      "totpSecret": "B3TJD6HK2U2LAJU7QF4A27BAGOV2ANZA",
       "recoveryCodesHash": [],
-      "passwordHash": "pbkdf2_sha256$310000$40704b82cae8a2f39af42276ac80cb3a$-k_aVOq58hQedXxpR9ibicusMSTEki-0pozvLxUkNcI=",
-      "fechaCreacion": "2026-02-17T23:49:24.697080+00:00",
+      "passwordHash": "pbkdf2_sha256$310000$9d26d498700b9e697a159be0e0fcad3d$wUzpNAoxXlTj7ufHb1pmdLVwncBuYWACNMa7ossPu6M=",
+      "fechaCreacion": "2026-02-18T06:04:58.448755+00:00",
       "nivelConfianza": 2
     }
   ]
