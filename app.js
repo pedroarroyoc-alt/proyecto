@@ -231,6 +231,15 @@ function show_otp_step(email) {
   setTimeout(() => suOtp?.focus(), 0);
 }
 
+function show_signup_form_step() {
+  if (signupTitle) signupTitle.textContent = "Crear una cuenta";
+  show(stepForm);
+  hide(stepOtp);
+  show(btnCreateAccount);
+  hide(btnVerifyOtp);
+  hide(btnResendSignupOtp);
+}
+
 async function open_signup_otp_flow(email, payload = null) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!normalizedEmail) return;
@@ -374,6 +383,9 @@ async function handle_create_account() {
     if (p1 !== p2) return show_signup_error("Las contraseñas no coinciden");
     if (!okTerms) return show_signup_error("Acepta los términos");
 
+     show_otp_step(email);
+    if (otpHint) otpHint.textContent = "Creando cuenta y enviando código OTP...";
+
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
 
     const data = await api_json('/users/human', {
@@ -430,6 +442,7 @@ async function handle_create_account() {
         console.error(resendErr);
       }
     }
+    show_signup_form_step();
     show_signup_error(humanize_error(err, `No se pudo conectar con el backend (${API_BASE}). Verifica que esté encendido y con CORS habilitado.`));
   } finally {
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);
