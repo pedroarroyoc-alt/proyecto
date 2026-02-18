@@ -3,9 +3,19 @@
 // =========================
 function resolveApiBase() {
   const params = new URLSearchParams(window.location.search);
-  const explicitApiBase = params.get("api") || window.localStorage.getItem("api_base_override");
+  const queryApiBase = String(params.get("api") || "").trim();
 
-  if (explicitApiBase) return explicitApiBase.replace(/\/$/, "");
+  if (queryApiBase) {
+    try {
+      const parsed = new URL(queryApiBase);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.toString().replace(/\/$/, "");
+      }
+      console.warn("[cryptolock-ui] Ignorando ?api por protocolo no soportado", queryApiBase);
+    } catch {
+      console.warn("[cryptolock-ui] Ignorando ?api inválido", queryApiBase);
+    }
+  }
 
   const isHttp = window.location.protocol === "http:" || window.location.protocol === "https:";
   const host = isHttp ? window.location.hostname : "127.0.0.1";
@@ -106,7 +116,7 @@ let signupSubmitting = false;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^\+?\d{7,15}$/;
 const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
-const APP_BUILD = "otpfix6";
+const APP_BUILD = "otpfix9";
 console.info(`[cryptolock-ui] build ${APP_BUILD}`);
 
 // =========================
@@ -244,11 +254,7 @@ function set_otp_delivery_hint(targetEl, data, fallback) {
 
 // Reajuste del flujo de registro: OTP en modal dedicado.
 function close_signup_otp(force = false) {
-  const isForced = typeof force === "boolean" ? force : false;
-  if (!isForced && signupSubmitting) {
-    toast("Espera un momento, estamos creando tu cuenta...");
-    return;
-  }
+  void force;
 
   signupVerificationLocked = false;
   pendingEmail = "";
@@ -276,15 +282,21 @@ function reset_signup_modal() {
   show_signup_form_step(false, { force: true });
 }
 
-function show_otp_step(email) {
+function show_otp_step(email, options = {}) {
+  const { preserveInput = false } = options;
   console.log("[signup] open modal OTP", { email });
   pendingEmail = email;
   signupVerificationLocked = true;
 
+  const activeEl = document.activeElement;
+  if (signupBackdrop && activeEl instanceof HTMLElement && signupBackdrop.contains(activeEl)) {
+    activeEl.blur();
+  }
+
   hide(signupBackdrop);
   show(signupOtpBackdrop);
   if (signupOtpBackdrop) signupOtpBackdrop.style.display = "grid";
-  if (suOtp) suOtp.value = "";
+  if (suOtp && !preserveInput) suOtp.value = "";
   show(btnVerifyOtp);
   show(btnResendSignupOtp);
   set_text(otpHint, "Revisa tu correo y pega aqui el codigo OTP.");
@@ -338,7 +350,7 @@ async function open_signup_otp_flow(email, payload = null, options = {}) {
 
   close_login();
   if (suEmail) suEmail.value = normalizedEmail;
-  show_otp_step(normalizedEmail);
+  show_otp_step(normalizedEmail, { preserveInput: true });
 
   if (payload) {
     set_otp_delivery_hint(otpHint, payload, hintMessage);
@@ -499,6 +511,8 @@ async function handle_create_account() {
     if (!okTerms) return show_signup_error("Acepta los términos");
 
     set_signup_hint("Creando cuenta y enviando código OTP...");
+    show_otp_step(email);
+    set_otp_delivery_hint(otpHint, null, "Creando cuenta y enviando codigo OTP...");
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", true);
     console.info("[signup] creando cuenta", { endpoint: `${API_BASE}/users/human`, email });
     
@@ -550,15 +564,22 @@ async function handle_create_account() {
       }
     }
 
-    if (!is_signup_otp_step_active()) {
-      show_signup_form_step(false, { force: false });
+    const fallbackMessage = humanize_error(err, backend_connection_hint());
+    if (signupEmail) {
+      if (!is_signup_otp_step_active()) {
+        show_otp_step(signupEmail);
+      }
+
+      set_otp_delivery_hint(
+        otpHint,
+        null,
+        `${fallbackMessage} Usa 'Reenviar OTP' cuando el backend este disponible.`
+      );
+      toast(fallbackMessage);
+      return;
     }
-    show_signup_error(
-      humanize_error(
-        err,
-        backend_connection_hint()
-      )
-    );
+
+    show_signup_error(fallbackMessage);
   } finally {
     signupSubmitting = false;
     set_button_loading(btnCreateAccount, "Creando...", "Crear cuenta", false);

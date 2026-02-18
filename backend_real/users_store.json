@@ -5,15 +5,15 @@
       "email": "pedrocuellar470@gmail.com",
       "nombre": "Pedro Hubert Arroyo Cuellar",
       "telefono": "",
-      "estado": "PENDIENTE",
-      "emailVerificado": false,
-      "mfaHabilitado": false,
-      "mfaMetodo": "none",
-      "totpSecret": "",
+      "estado": "ACTIVO",
+      "emailVerificado": true,
+      "mfaHabilitado": true,
+      "mfaMetodo": "totp",
+      "totpSecret": "4Q6W7LKIUB3AKLUAL5EURWTKKCIX6ALR",
       "recoveryCodesHash": [],
       "passwordHash": "pbkdf2_sha256$310000$40704b82cae8a2f39af42276ac80cb3a$-k_aVOq58hQedXxpR9ibicusMSTEki-0pozvLxUkNcI=",
       "fechaCreacion": "2026-02-17T23:49:24.697080+00:00",
-      "nivelConfianza": 0
+      "nivelConfianza": 2
     }
   ]
 }
