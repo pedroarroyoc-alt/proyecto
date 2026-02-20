@@ -645,6 +645,14 @@ select, textarea {
   cursor:pointer;
 }
 .primary-btn:hover{ filter:brightness(.97); }
+.btn:disabled,
+.ghost:disabled,
+.ghost-btn:disabled,
+.primary-btn:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  filter: none;
+}
 .divider{
   position:relative;
   text-align:center;
@@ -720,6 +728,16 @@ select, textarea {
   display:flex;
   gap:8px;
   flex-wrap:wrap;
+}
+
+.face-camera{
+  width: min(100%, 520px);
+  margin: 0 auto;
+  border-radius: 14px;
+  border: 1px solid #e7eaf0;
+  background: #0f172a;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
 }
 
 .mobile-signer{

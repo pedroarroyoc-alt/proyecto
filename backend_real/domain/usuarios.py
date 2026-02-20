@@ -41,11 +41,16 @@ class Usuario:
         tiene_firma_crypto = bool(
             getattr(self, "cryptoAuthEnabled", False) and getattr(self, "cryptoPublicKeyPem", "")
         )
+        tiene_faceid = bool(
+            getattr(self, "faceIdEnabled", False) and getattr(self, "faceIdEnrolled", False)
+        )
 
-        if tiene_mfa and tiene_firma_crypto:
+        factores_fuertes = int(tiene_mfa) + int(tiene_firma_crypto) + int(tiene_faceid)
+
+        if factores_fuertes >= 2:
             self.nivelConfianza = 3
             return
-        if tiene_mfa or tiene_firma_crypto:
+        if factores_fuertes >= 1:
             self.nivelConfianza = 2
             return
         self.nivelConfianza = 1
@@ -61,7 +66,7 @@ class Usuario:
             0: "No verificado",
             1: "Email verificado por OTP (sin MFA)",
             2: "Email verificado + factor fuerte habilitado",
-            3: "Email verificado + TOTP + firma criptografica",
+            3: "Email verificado + dos factores fuertes",
         }
         return descripciones.get(nivel, "Nivel personalizado")
 
@@ -76,6 +81,8 @@ class Usuario:
             "mfaMetodo": getattr(self, "mfaMetodo", "none"),
             "cryptoAuthEnabled": bool(getattr(self, "cryptoAuthEnabled", False)),
             "cryptoPublicKeyConfigured": bool(getattr(self, "cryptoPublicKeyPem", "")),
+            "faceIdEnabled": bool(getattr(self, "faceIdEnabled", False)),
+            "faceIdEnrolled": bool(getattr(self, "faceIdEnrolled", False)),
             "fechaCreacion": self.fechaCreacion.isoformat(),
             "nivelConfianza": self.nivelConfianza,
             "nivelConfianzaDescripcion": self.descripcion_nivel_confianza(self.nivelConfianza),
@@ -93,6 +100,8 @@ class UsuarioHumano(Usuario):
     passwordHash: str = ""
     cryptoAuthEnabled: bool = False
     cryptoPublicKeyPem: str = ""
+    faceIdEnabled: bool = False
+    faceIdEnrolled: bool = False
 
     def verificarMFA(self) -> bool:
         return bool(self.mfaHabilitado)

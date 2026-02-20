@@ -16,6 +16,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 from domain.usuarios import EstadoUsuario, UsuarioHumano
 from services.audit_service import get_audit_service
+from services.faceid_service import faceid_service
 from services.email_service import send_otp_email
 from services.security_service import PasswordHasher, otp_service, totp_service
 
@@ -80,6 +81,21 @@ class UpdateCryptoSignatureMethodRequest(BaseModel):
         return (v or "").strip()
 
 
+class UpdateFaceIdMethodRequest(BaseModel):
+    habilitado: bool = False
+
+
+class EnrollFaceIdRequest(BaseModel):
+    imagenes: list[str]
+
+    @field_validator("imagenes")
+    @classmethod
+    def validate_images(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError("El campo imagenes debe ser una lista")
+        return [str(item or "").strip() for item in v if str(item or "").strip()]
+
+
 class ConfirmTotpEnrollmentRequest(BaseModel):
     codigo: str
 
@@ -125,6 +141,8 @@ class UserRepository:
             "totpSecret": user.totpSecret,
             "cryptoAuthEnabled": bool(getattr(user, "cryptoAuthEnabled", False)),
             "cryptoPublicKeyPem": str(getattr(user, "cryptoPublicKeyPem", "") or ""),
+            "faceIdEnabled": bool(getattr(user, "faceIdEnabled", False)),
+            "faceIdEnrolled": bool(getattr(user, "faceIdEnrolled", False)),
             "recoveryCodesHash": list(getattr(user, "recoveryCodesHash", [])),
             "passwordHash": user.passwordHash,
             "fechaCreacion": user.fechaCreacion.isoformat(),
@@ -148,6 +166,8 @@ class UserRepository:
             totpSecret=str(raw.get("totpSecret", "") or ""),
             cryptoAuthEnabled=bool(raw.get("cryptoAuthEnabled", False)),
             cryptoPublicKeyPem=str(raw.get("cryptoPublicKeyPem", "") or ""),
+            faceIdEnabled=bool(raw.get("faceIdEnabled", False)),
+            faceIdEnrolled=bool(raw.get("faceIdEnrolled", False)),
             recoveryCodesHash=[str(x) for x in (raw.get("recoveryCodesHash") or [])],
             passwordHash=str(raw.get("passwordHash", "") or ""),
             emailVerificado=bool(raw.get("emailVerificado", False)),
@@ -436,6 +456,70 @@ class UserService:
             "message": "Metodo de firma criptografica actualizado.",
         }
 
+    def update_faceid_method(self, user_id: str, payload: UpdateFaceIdMethodRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        user.faceIdEnabled = bool(payload.habilitado)
+        user.actualizar_nivel_confianza()
+        self._repository.save(user)
+
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="USER_FACEID_METHOD_UPDATED",
+            recurso=f"/users/{user_id}/methods/faceid",
+            metadatos={
+                "habilitado": user.faceIdEnabled,
+                "enrolled": bool(getattr(user, "faceIdEnrolled", False)),
+            },
+        )
+
+        if user.faceIdEnabled and not bool(getattr(user, "faceIdEnrolled", False)):
+            message = "FaceID habilitado. Falta registrar muestras faciales para usarlo en login."
+        elif not user.faceIdEnabled:
+            message = "FaceID desactivado."
+        else:
+            message = "FaceID habilitado."
+
+        return {
+            "user": self.to_public(user),
+            "message": message,
+        }
+
+    def enroll_faceid(self, user_id: str, payload: EnrollFaceIdRequest) -> dict:
+        user = self._repository.get_by_id(user_id)
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+
+        images = payload.imagenes or []
+        if not images:
+            raise UserError(message="Debes enviar imagenes para registrar FaceID", status_code=400)
+
+        try:
+            accepted = faceid_service.enroll_user(user.email, images, overwrite=True)
+        except ValueError as exc:
+            raise UserError(message=str(exc), status_code=400) from exc
+        except RuntimeError as exc:
+            raise UserError(message=str(exc), status_code=503) from exc
+
+        user.faceIdEnrolled = True
+        user.actualizar_nivel_confianza()
+        self._repository.save(user)
+
+        self._audit.registrar_evento(
+            usuario_id=str(user.id),
+            accion="USER_FACEID_ENROLLED",
+            recurso=f"/users/{user_id}/methods/faceid/enroll",
+            metadatos={"muestras": accepted},
+        )
+
+        return {
+            "user": self.to_public(user),
+            "acceptedSamples": accepted,
+            "message": f"FaceID registrado con {accepted} muestras.",
+        }
+
     def start_totp_enrollment(self, user_id: str) -> dict:
         user = self._repository.get_by_id(user_id)
         if not user:
@@ -536,6 +620,8 @@ class UserController:
         self.router.get("/{user_id}")(self.get_user)    # GET /users/{id}
         self.router.patch("/{user_id}/mfa")(self.update_user_mfa)  # PATCH /users/{id}/mfa
         self.router.patch("/{user_id}/methods/crypto-signature")(self.update_crypto_signature_method)
+        self.router.patch("/{user_id}/methods/faceid")(self.update_faceid_method)
+        self.router.post("/{user_id}/methods/faceid/enroll")(self.enroll_faceid)
         self.router.post("/{user_id}/mfa/totp/enroll")(self.start_totp_enrollment)
         self.router.post("/{user_id}/mfa/totp/confirm")(self.confirm_totp_enrollment)
         self.router.post("/{user_id}/mfa/recovery/verify")(self.verify_recovery_code)
@@ -567,6 +653,18 @@ class UserController:
     def update_crypto_signature_method(self, user_id: str, payload: UpdateCryptoSignatureMethodRequest) -> dict:
         try:
             return self._service.update_crypto_signature_method(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def update_faceid_method(self, user_id: str, payload: UpdateFaceIdMethodRequest) -> dict:
+        try:
+            return self._service.update_faceid_method(user_id, payload)
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    def enroll_faceid(self, user_id: str, payload: EnrollFaceIdRequest) -> dict:
+        try:
+            return self._service.enroll_faceid(user_id, payload)
         except UserError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 

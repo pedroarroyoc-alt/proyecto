@@ -243,6 +243,8 @@
 
       <button type="submit" class="primary-btn">Ingresar</button>
       <button type="button" class="ghost-btn" id="btnCryptoLogin">Ingresar con celular (firma)</button>
+      <button type="button" class="ghost-btn" id="btnFaceLogin" disabled aria-disabled="true">Ingresar con FaceID</button>
+      <p class="muted small center" id="faceLoginHint">FaceID se activa desde Metodos en el dashboard.</p>
 
 
       <p class="muted small center">
@@ -328,6 +330,31 @@
     </div>
   </div>
 
+  <!-- Modal FaceID (captura de camara) -->
+  <div class="backdrop hidden" id="faceLoginBackdrop" aria-hidden="true">
+    <div class="modal otp-modal" role="dialog" aria-modal="true" aria-labelledby="faceLoginTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="faceLoginTitle">FaceID</h2>
+          <p class="muted" id="faceLoginModeHint">Usa la camara para verificar tu identidad facial.</p>
+        </div>
+        <button class="icon-btn" id="btnCloseFaceLogin" aria-label="Cerrar">&#10005;</button>
+      </div>
+
+      <div class="form">
+        <video id="faceCameraVideo" class="face-camera" autoplay muted playsinline></video>
+        <canvas id="faceCaptureCanvas" class="hidden"></canvas>
+
+        <div class="crypto-row">
+          <button type="button" class="btn" id="btnFacePrimaryAction">Verificar FaceID</button>
+          <button type="button" class="ghost-btn" id="btnFaceRestartCamera">Reiniciar camara</button>
+        </div>
+
+        <p class="muted small" id="faceCaptureStatus">Esperando camara...</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Modo celular para firmar challenge -->
   <section class="mobile-signer hidden" id="mobileSignerApp">
     <div class="mobile-signer-card">
@@ -353,7 +380,7 @@
   </section>
 
   <!-- JS: lógica del frontend (al final para asegurar que cargue todos los modales) -->
-  <script src="./app.js?v=20260218-otpfix11"></script>
+  <script src="./app.js?v=20260220-faceidfull02"></script>
 
 </body>
 </html>

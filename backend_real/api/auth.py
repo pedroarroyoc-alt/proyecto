@@ -17,6 +17,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from api.users import password_hasher, user_repository
 from services.audit_service import get_audit_service
 from services.email_service import EmailDeliveryError, send_otp_email
+from services.faceid_service import faceid_service
 from services.security_service import (
     otp_service,
     rate_limiter,
@@ -101,6 +102,21 @@ class CryptoExchangeRequest(BaseModel):
         return (v or "").strip()
 
 
+class FaceIdLoginRequest(BaseModel):
+    email: EmailStr
+    imageBase64: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
+    @field_validator("imageBase64")
+    @classmethod
+    def normalize_image(cls, v: str) -> str:
+        return (v or "").strip()
+
+
 class AuthService:
     def __init__(self) -> None:
         self._users_repo = user_repository
@@ -148,6 +164,13 @@ class AuthService:
             raise HTTPException(status_code=400, detail="Firma criptografica deshabilitada para este usuario")
         if not str(getattr(user, "cryptoPublicKeyPem", "") or "").strip():
             raise HTTPException(status_code=400, detail="No hay llave publica registrada")
+
+    @staticmethod
+    def _assert_faceid_method_enabled(user) -> None:
+        if not bool(getattr(user, "faceIdEnabled", False)):
+            raise HTTPException(status_code=400, detail="FaceID deshabilitado para este usuario")
+        if not bool(getattr(user, "faceIdEnrolled", False)):
+            raise HTTPException(status_code=400, detail="FaceID no enrolado. Registra tu rostro primero")
 
     # ======== Login por correo+password+TOTP ========
     def request_login_otp(self, payload: LoginRequest):
@@ -475,6 +498,67 @@ class AuthService:
         )
         return {"message": "Acceso verificado por firma criptografica", "user": {"email": email}, **tokens}
 
+    def login_faceid(self, payload: FaceIdLoginRequest) -> dict:
+        email = str(payload.email).strip().lower()
+        image_b64 = (payload.imageBase64 or "").strip()
+        if not image_b64:
+            raise HTTPException(status_code=400, detail="imageBase64 es obligatorio")
+
+        allowed, retry_after = rate_limiter.check(
+            action="faceid_login",
+            key=email,
+            window_seconds=60,
+            max_attempts=20,
+            block_seconds=120,
+        )
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"Demasiados intentos. Reintenta en {retry_after}s")
+
+        user = self._validate_active_user_for_login(email)
+        self._assert_faceid_method_enabled(user)
+
+        try:
+            result = faceid_service.verify_user(email, image_b64)
+        except FileNotFoundError:
+            user.faceIdEnrolled = False
+            if hasattr(user, "actualizar_nivel_confianza"):
+                user.actualizar_nivel_confianza()
+            self._users_repo.save(user)
+            raise HTTPException(status_code=400, detail="No existe perfil facial entrenado para este usuario")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        if not result.autorizado:
+            self._audit.registrar_evento(
+                usuario_id=email,
+                accion="LOGIN_FACEID_DENIED",
+                recurso="/auth/faceid/login",
+                metadatos={
+                    "confidence": result.confianza_lbph,
+                    "facesDetected": result.rostros_detectados,
+                },
+            )
+            raise HTTPException(status_code=401, detail="Rostro no autorizado")
+
+        tokens = token_service.issue_tokens(email)
+        self._audit.registrar_evento(
+            usuario_id=email,
+            accion="LOGIN_FACEID_GRANTED",
+            recurso="/auth/faceid/login",
+            metadatos={
+                "confidence": result.confianza_lbph,
+                "facesDetected": result.rostros_detectados,
+            },
+        )
+        return {
+            "message": "Acceso verificado por FaceID",
+            "user": {"email": email},
+            "confidence": result.confianza_lbph,
+            **tokens,
+        }
+
     # ======== Tokens ========
     def refresh_token(self, payload: RefreshTokenRequest):
         try:
@@ -510,6 +594,9 @@ class AuthController:
     def exchange_crypto_login(self, payload: CryptoExchangeRequest):
         return self._auth_service.exchange_crypto_login(payload)
 
+    def login_faceid(self, payload: FaceIdLoginRequest):
+        return self._auth_service.login_faceid(payload)
+
     def refresh_token(self, payload: RefreshTokenRequest):
         return self._auth_service.refresh_token(payload)
 
@@ -530,5 +617,6 @@ router.add_api_route("/crypto/challenge", auth_controller.request_crypto_challen
 router.add_api_route("/crypto/verify", auth_controller.verify_crypto_signature, methods=["POST"])
 router.add_api_route("/crypto/challenge-status", crypto_challenge_status_endpoint, methods=["GET"])
 router.add_api_route("/crypto/exchange", auth_controller.exchange_crypto_login, methods=["POST"])
+router.add_api_route("/faceid/login", auth_controller.login_faceid, methods=["POST"])
 router.add_api_route("/token/refresh", auth_controller.refresh_token, methods=["POST"])
 router.add_api_route("/logout", auth_controller.logout, methods=["POST"])

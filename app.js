@@ -80,6 +80,16 @@ const loginTotpGuide = document.getElementById("loginTotpGuide");
 const loginTotpQr = document.getElementById("loginTotpQr");
 const loginTotpSecret = document.getElementById("loginTotpSecret");
 const btnCryptoLogin = document.getElementById("btnCryptoLogin");
+const btnFaceLogin = document.getElementById("btnFaceLogin");
+const faceLoginHint = document.getElementById("faceLoginHint");
+const faceLoginBackdrop = document.getElementById("faceLoginBackdrop");
+const btnCloseFaceLogin = document.getElementById("btnCloseFaceLogin");
+const faceLoginModeHint = document.getElementById("faceLoginModeHint");
+const faceCameraVideo = document.getElementById("faceCameraVideo");
+const faceCaptureCanvas = document.getElementById("faceCaptureCanvas");
+const btnFacePrimaryAction = document.getElementById("btnFacePrimaryAction");
+const btnFaceRestartCamera = document.getElementById("btnFaceRestartCamera");
+const faceCaptureStatus = document.getElementById("faceCaptureStatus");
 const cryptoLoginBackdrop = document.getElementById("cryptoLoginBackdrop");
 const btnCloseCryptoLogin = document.getElementById("btnCloseCryptoLogin");
 const cryptoChallengeQr = document.getElementById("cryptoChallengeQr");
@@ -140,8 +150,16 @@ const PHONE_REGEX = /^\+?\d{7,15}$/;
 const DEFAULT_SIGNUP_HINT = "El correo debe terminar en @gmail.com.";
 const CRYPTO_DEVICE_KEY_PREFIX = "cryptolock_crypto_device_key_v1:";
 const CRYPTO_CHALLENGE_POLL_MS = 2000;
-const APP_BUILD = "otpfix11";
+const FACEID_ENROLL_SAMPLES = 10;
+const FACEID_CAPTURE_INTERVAL_MS = 140;
+const APP_BUILD = "faceid-full01";
 console.info(`[cryptolock-ui] build ${APP_BUILD}`);
+
+const faceLoginEligibilityCache = new Map();
+let faceLoginSyncSeq = 0;
+let faceCameraStream = null;
+let faceCaptureMode = "login";
+let faceCaptureContext = null;
 
 if (btnSignCryptoHere) {
   btnSignCryptoHere.classList.add("hidden");
@@ -212,6 +230,7 @@ function open_signup() {
 
 function open_login() {
   show(loginBackdrop);
+  sync_faceid_login_button();
   setTimeout(() => liEmail?.focus(), 0);
 }
 
@@ -574,6 +593,329 @@ function clear_device_key_record(email) {
   localStorage.removeItem(get_crypto_storage_key(email));
 }
 
+function get_faceid_login_identifier() {
+  const rawInput = String(liEmail?.value || "").trim();
+  if (rawInput) {
+    const fromInput = normalize_email(rawInput);
+    return is_email_identifier(fromInput) ? fromInput : "";
+  }
+
+  const remembered = normalize_email(localStorage.getItem("cryptolock_last_login"));
+  if (remembered && is_email_identifier(remembered)) return remembered;
+
+  const fromSession = normalize_email(currentUserEmail);
+  if (fromSession && is_email_identifier(fromSession)) return fromSession;
+
+  return "";
+}
+
+function apply_faceid_login_state(email, state) {
+  if (!btnFaceLogin) return;
+  const enabled = Boolean(state?.enabled);
+  const enabledRaw = Boolean(state?.enabledRaw);
+  const enrolled = Boolean(state?.enrolled);
+
+  btnFaceLogin.disabled = !enabled;
+  btnFaceLogin.setAttribute("aria-disabled", String(!enabled));
+
+  if (!faceLoginHint) return;
+  if (enabled) {
+    faceLoginHint.textContent = `FaceID habilitado para ${email}.`;
+    return;
+  }
+  if (!enabledRaw) {
+    faceLoginHint.textContent = `FaceID desactivado para ${email}. Activalo en Metodos del dashboard.`;
+    return;
+  }
+  if (!enrolled) {
+    faceLoginHint.textContent = `FaceID habilitado pero sin registro facial para ${email}. Registra tu rostro en Metodos.`;
+    return;
+  }
+  faceLoginHint.textContent = "FaceID no disponible en este momento.";
+}
+
+function invalidate_faceid_login_state(email) {
+  const normalized = normalize_email(email);
+  if (!normalized) return;
+  faceLoginEligibilityCache.delete(normalized);
+}
+
+async function fetch_faceid_login_state(email) {
+  const normalized = normalize_email(email);
+  if (!normalized || !is_email_identifier(normalized)) {
+    return { enabled: false, enabledRaw: false, enrolled: false };
+  }
+
+  try {
+    const user = await api_json(`/users/by-email?email=${encodeURIComponent(normalized)}`);
+    const enabledRaw = Boolean(user?.faceIdEnabled);
+    const enrolled = Boolean(user?.faceIdEnrolled);
+    return {
+      enabled: enabledRaw && enrolled,
+      enabledRaw,
+      enrolled,
+    };
+  } catch (err) {
+    if (err?.status === 404) {
+      return { enabled: false, enabledRaw: false, enrolled: false };
+    }
+    throw err;
+  }
+}
+
+async function sync_faceid_login_button() {
+  if (!btnFaceLogin) return;
+
+  const loginIdentifier = get_faceid_login_identifier();
+  if (!loginIdentifier) {
+    btnFaceLogin.disabled = true;
+    btnFaceLogin.setAttribute("aria-disabled", "true");
+    if (faceLoginHint) {
+      faceLoginHint.textContent = "FaceID se activa desde Metodos en el dashboard.";
+    }
+    return;
+  }
+
+  const cached = faceLoginEligibilityCache.get(loginIdentifier);
+  if (cached) {
+    apply_faceid_login_state(loginIdentifier, cached);
+    return;
+  }
+
+  const seq = ++faceLoginSyncSeq;
+  btnFaceLogin.disabled = true;
+  btnFaceLogin.setAttribute("aria-disabled", "true");
+  if (faceLoginHint) faceLoginHint.textContent = "Verificando estado de FaceID...";
+
+  try {
+    const stateInfo = await fetch_faceid_login_state(loginIdentifier);
+    faceLoginEligibilityCache.set(loginIdentifier, stateInfo);
+    if (seq !== faceLoginSyncSeq) return;
+    apply_faceid_login_state(loginIdentifier, stateInfo);
+  } catch (err) {
+    if (seq !== faceLoginSyncSeq) return;
+    btnFaceLogin.disabled = true;
+    btnFaceLogin.setAttribute("aria-disabled", "true");
+    if (faceLoginHint) {
+      faceLoginHint.textContent = humanize_error(err, backend_connection_hint());
+    }
+  }
+}
+
+function set_face_capture_status(message, isError = false) {
+  set_status_text(faceCaptureStatus, message, isError);
+}
+
+function stop_face_camera_stream() {
+  if (faceCameraStream) {
+    faceCameraStream.getTracks().forEach((track) => track.stop());
+    faceCameraStream = null;
+  }
+  if (faceCameraVideo) {
+    faceCameraVideo.srcObject = null;
+  }
+}
+
+async function start_face_camera_stream() {
+  if (!window.isSecureContext) {
+    throw new Error("FaceID requiere HTTPS o localhost para acceder a la camara.");
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Este navegador no expone la API de camara (mediaDevices.getUserMedia).");
+  }
+
+  stop_face_camera_stream();
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      },
+      audio: false,
+    });
+  } catch (err) {
+    const name = String(err?.name || "");
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      throw new Error("Permiso de camara denegado. Habilitalo en el navegador.");
+    }
+    if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+      throw new Error("No se encontro ninguna camara disponible.");
+    }
+    if (name === "NotReadableError" || name === "TrackStartError") {
+      throw new Error("La camara esta en uso por otra aplicacion.");
+    }
+    throw err;
+  }
+
+  faceCameraStream = stream;
+  if (!faceCameraVideo) throw new Error("No se encontro el visor de camara");
+  faceCameraVideo.srcObject = stream;
+  await faceCameraVideo.play();
+}
+
+function capture_face_frame_base64() {
+  if (!faceCameraVideo || !faceCaptureCanvas) {
+    throw new Error("No se pudo inicializar la captura de FaceID");
+  }
+  const width = faceCameraVideo.videoWidth || 0;
+  const height = faceCameraVideo.videoHeight || 0;
+  if (!width || !height) {
+    throw new Error("La camara aun no esta lista. Espera un momento e intenta otra vez.");
+  }
+
+  faceCaptureCanvas.width = width;
+  faceCaptureCanvas.height = height;
+  const context = faceCaptureCanvas.getContext("2d");
+  if (!context) throw new Error("No se pudo capturar frame de FaceID");
+  context.drawImage(faceCameraVideo, 0, 0, width, height);
+  return faceCaptureCanvas.toDataURL("image/jpeg", 0.92);
+}
+
+async function capture_face_samples(count, delayMs) {
+  const total = Number(count || 0);
+  const delay = Number(delayMs || 0);
+  const samples = [];
+  for (let i = 0; i < total; i += 1) {
+    samples.push(capture_face_frame_base64());
+    if (i < total - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return samples;
+}
+
+async function open_face_capture_modal(mode, context = {}) {
+  faceCaptureMode = mode === "enroll" ? "enroll" : "login";
+  faceCaptureContext = context || {};
+
+  const modeHint = faceCaptureMode === "enroll"
+    ? `Capturaremos ${FACEID_ENROLL_SAMPLES} muestras faciales para registrar FaceID.`
+    : "Alinea tu rostro y verifica tu identidad con la camara.";
+  set_text(faceLoginModeHint, modeHint);
+
+  if (btnFacePrimaryAction) {
+    btnFacePrimaryAction.textContent = faceCaptureMode === "enroll"
+      ? `Capturar y registrar (${FACEID_ENROLL_SAMPLES})`
+      : "Verificar FaceID";
+    btnFacePrimaryAction.disabled = false;
+  }
+
+  show(faceLoginBackdrop);
+  if (faceLoginBackdrop) faceLoginBackdrop.style.display = "grid";
+  set_face_capture_status("Solicitando permiso de camara...");
+
+  try {
+    await start_face_camera_stream();
+    set_face_capture_status("Camara lista.");
+  } catch (err) {
+    set_face_capture_status(humanize_error(err, "No se pudo iniciar la camara"), true);
+    if (btnFacePrimaryAction) btnFacePrimaryAction.disabled = true;
+    throw err;
+  }
+}
+
+function close_face_capture_modal() {
+  stop_face_camera_stream();
+  faceCaptureMode = "login";
+  faceCaptureContext = null;
+  if (faceLoginBackdrop) faceLoginBackdrop.style.display = "";
+  hide(faceLoginBackdrop);
+  if (btnFacePrimaryAction) {
+    btnFacePrimaryAction.disabled = false;
+    btnFacePrimaryAction.textContent = "Verificar FaceID";
+  }
+  set_face_capture_status("Esperando camara...");
+}
+
+async function verify_faceid_login_with_capture() {
+  const contextEmail = normalize_email(faceCaptureContext?.email);
+  const email = contextEmail || normalize_email(liEmail?.value);
+  if (!is_email_identifier(email)) {
+    toast("Ingresa un correo valido para usar FaceID");
+    return;
+  }
+
+  set_button_loading(btnFacePrimaryAction, "Verificando...", "Verificar FaceID", true);
+  try {
+    set_face_capture_status("Capturando imagen...");
+    const imageBase64 = capture_face_frame_base64();
+    set_face_capture_status("Validando rostro en backend...");
+    const data = await post_json("/auth/faceid/login", { email, imageBase64 });
+    currentUserEmail = data?.user?.email || email;
+    invalidate_faceid_login_state(email);
+    await sync_faceid_login_button();
+
+    close_face_capture_modal();
+    close_login();
+    close_login_otp();
+    close_crypto_login();
+    toast(data?.message || "Acceso verificado por FaceID");
+    await go_to_dashboard();
+  } catch (err) {
+    const message = humanize_error(err, "No se pudo verificar FaceID");
+    set_face_capture_status(message, true);
+    toast(message);
+  } finally {
+    set_button_loading(btnFacePrimaryAction, "Verificando...", "Verificar FaceID", false);
+  }
+}
+
+async function enroll_faceid_from_camera() {
+  const contextUserId = String(faceCaptureContext?.userId || "").trim();
+  const contextEmail = normalize_email(faceCaptureContext?.email);
+  if (!contextUserId || !contextEmail) {
+    toast("No hay contexto de usuario para registrar FaceID");
+    return;
+  }
+
+  const idleText = `Capturar y registrar (${FACEID_ENROLL_SAMPLES})`;
+  set_button_loading(btnFacePrimaryAction, "Registrando...", idleText, true);
+  try {
+    set_face_capture_status(`Capturando ${FACEID_ENROLL_SAMPLES} muestras...`);
+    const samples = await capture_face_samples(FACEID_ENROLL_SAMPLES, FACEID_CAPTURE_INTERVAL_MS);
+    set_face_capture_status("Entrenando perfil facial en backend...");
+    const data = await post_json(`/users/${contextUserId}/methods/faceid/enroll`, {
+      imagenes: samples,
+    });
+
+    invalidate_faceid_login_state(contextEmail);
+    await ensure_methods_context();
+    render();
+    await sync_faceid_login_button();
+
+    set_face_capture_status("FaceID registrado correctamente.");
+    toast(data?.message || "FaceID registrado correctamente");
+    close_face_capture_modal();
+  } catch (err) {
+    const message = humanize_error(err, "No se pudo registrar FaceID");
+    set_face_capture_status(message, true);
+    toast(message);
+  } finally {
+    set_button_loading(btnFacePrimaryAction, "Registrando...", idleText, false);
+  }
+}
+
+async function run_face_primary_action() {
+  if (faceCaptureMode === "enroll") {
+    await enroll_faceid_from_camera();
+    return;
+  }
+  await verify_faceid_login_with_capture();
+}
+
+async function restart_face_camera() {
+  set_face_capture_status("Reiniciando camara...");
+  try {
+    await start_face_camera_stream();
+    set_face_capture_status("Camara lista.");
+  } catch (err) {
+    set_face_capture_status(humanize_error(err, "No se pudo reiniciar camara"), true);
+  }
+}
+
 function array_buffer_to_base64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -756,6 +1098,7 @@ async function exchange_crypto_grant(challengeId, loginGrant) {
     loginGrant,
   });
   currentUserEmail = data?.user?.email || cryptoLoginSession?.email || "";
+  sync_faceid_login_button();
   close_crypto_login();
   close_login();
   close_login_otp();
@@ -859,6 +1202,42 @@ async function start_crypto_login() {
   }
 }
 
+async function start_faceid_login() {
+  const loginIdentifier = liEmail?.value?.trim() || "";
+  const normalizedEmail = normalize_email(loginIdentifier);
+
+  if (!is_email_identifier(normalizedEmail)) {
+    toast("Ingresa un correo valido para usar FaceID.");
+    await sync_faceid_login_button();
+    return;
+  }
+
+  await sync_faceid_login_button();
+  let stateInfo = faceLoginEligibilityCache.get(normalizedEmail);
+  if (!stateInfo) {
+    try {
+      stateInfo = await fetch_faceid_login_state(normalizedEmail);
+      faceLoginEligibilityCache.set(normalizedEmail, stateInfo);
+    } catch (err) {
+      toast(humanize_error(err, backend_connection_hint()));
+      return;
+    }
+  }
+
+  if (!stateInfo?.enabled) {
+    apply_faceid_login_state(normalizedEmail, stateInfo || {});
+    toast("FaceID no esta disponible para este correo.");
+    return;
+  }
+
+  persist_login_identifier(loginIdentifier);
+  try {
+    await open_face_capture_modal("login", { email: normalizedEmail });
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo abrir la camara para FaceID"));
+  }
+}
+
 async function sign_current_challenge_here() {
   toast("Por seguridad, este login se aprueba solo desde tu celular.");
 }
@@ -887,6 +1266,7 @@ function open_mobile_signer_base() {
   hide(dashboardApp);
   hide(loginBackdrop);
   hide(loginOtpBackdrop);
+  close_face_capture_modal();
   hide(signupBackdrop);
   hide(signupOtpBackdrop);
   hide(cryptoLoginBackdrop);
@@ -1288,6 +1668,8 @@ function render_detail(item) {
     const cryptoEnabled = Boolean(state?.methods?.cryptoAuthEnabled);
     const backendPublicKey = Boolean(state?.methods?.cryptoPublicKeyConfigured);
     const localPrivateKey = Boolean(state?.methods?.localPrivateKeyAvailable);
+    const faceIdEnabled = Boolean(state?.methods?.faceIdEnabled);
+    const faceIdEnrolled = Boolean(state?.methods?.faceIdEnrolled);
     const setupLink = String(state?.methods?.setupLink || "");
     const setupQrUrl = String(state?.methods?.setupQrUrl || "");
     const qrHostHint = mobile_qr_host_hint();
@@ -1310,6 +1692,11 @@ function render_detail(item) {
     const localKeyActionHtml = localPrivateKey
       ? `<button class="ghost" id="btnClearLocalCryptoKey">Eliminar llave local de este dispositivo</button>`
       : "";
+    const faceStateText = faceIdEnabled ? "Habilitado" : "Desactivado";
+    const faceEnrollText = faceIdEnrolled ? "Registrado" : "Sin registro";
+    const faceAccessText = (faceIdEnabled && faceIdEnrolled)
+      ? "Boton FaceID habilitado en Acceder"
+      : "Boton FaceID bloqueado en Acceder";
 
     detailEl.innerHTML = `
       <div class="detail-card">
@@ -1331,6 +1718,21 @@ function render_detail(item) {
         </div>
         <p class="muted small" id="methodsCryptoHint">${hasSession ? "Recomendado: abre este QR desde tu celular y configura ahi la llave privada." : "Inicia sesion para configurar este metodo."}</p>
         ${setupPanelHtml}
+
+        <hr />
+        <h2>Metodo: FaceID</h2>
+        <p>Este metodo autentica con reconocimiento facial usando la camara del navegador y validacion en backend.</p>
+        <ul>
+          <li><b>Estado:</b> ${faceStateText}</li>
+          <li><b>Registro facial:</b> ${faceEnrollText}</li>
+          <li><b>Login:</b> ${faceAccessText}</li>
+        </ul>
+        <div class="row">
+          <button class="btn" id="btnEnableFaceMethod" ${hasSession && !faceIdEnabled ? "" : "disabled"}>Activar FaceID</button>
+          <button class="ghost" id="btnDisableFaceMethod" ${hasSession && faceIdEnabled ? "" : "disabled"}>Desactivar</button>
+          <button class="ghost" id="btnEnrollFaceMethod" ${hasSession ? "" : "disabled"}>${faceIdEnrolled ? "Actualizar registro facial" : "Registrar rostro"}</button>
+        </div>
+        <p class="muted small">${hasSession ? "Para usar FaceID en login necesitas tenerlo habilitado y registrar muestras faciales." : "Inicia sesion para gestionar FaceID."}</p>
       </div>
     `;
 
@@ -1340,6 +1742,9 @@ function render_detail(item) {
     });
     detailEl.querySelector("#btnDisableCryptoMethod")?.addEventListener("click", disable_crypto_signature_method);
     detailEl.querySelector("#btnClearLocalCryptoKey")?.addEventListener("click", clear_local_crypto_key_for_current_device);
+    detailEl.querySelector("#btnEnableFaceMethod")?.addEventListener("click", enable_faceid_method);
+    detailEl.querySelector("#btnDisableFaceMethod")?.addEventListener("click", disable_faceid_method);
+    detailEl.querySelector("#btnEnrollFaceMethod")?.addEventListener("click", start_faceid_enrollment);
     return;
   }
 
@@ -1418,6 +1823,8 @@ async function ensure_methods_context() {
     user.cryptoPublicKeyConfigured || user.cryptoPublicKeyPem
   );
   state.methods.localPrivateKeyAvailable = Boolean(localRecord?.privateKeyPkcs8B64);
+  state.methods.faceIdEnabled = Boolean(user.faceIdEnabled);
+  state.methods.faceIdEnrolled = Boolean(user.faceIdEnrolled);
   return user;
 }
 
@@ -1476,6 +1883,63 @@ async function disable_crypto_signature_method() {
     toast(humanize_error(err, "No se pudo desactivar firma criptografica"));
   } finally {
     set_button_loading(disableBtn, "Desactivando...", "Desactivar", false);
+  }
+}
+
+async function enable_faceid_method() {
+  if (!currentUserEmail) return toast("Debes iniciar sesion primero");
+  const user = await ensure_methods_context();
+  if (!user?.id || !user?.email) return toast("No se pudo cargar el usuario");
+
+  const enableBtn = detailEl?.querySelector("#btnEnableFaceMethod");
+  set_button_loading(enableBtn, "Activando...", "Activar FaceID", true);
+  try {
+    const data = await patch_json(`/users/${user.id}/methods/faceid`, { habilitado: true });
+    invalidate_faceid_login_state(user.email);
+    await ensure_methods_context();
+    await sync_faceid_login_button();
+    toast(data?.message || "FaceID habilitado");
+    render();
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo habilitar FaceID"));
+  } finally {
+    set_button_loading(enableBtn, "Activando...", "Activar FaceID", false);
+  }
+}
+
+async function disable_faceid_method() {
+  if (!currentUserEmail) return toast("Debes iniciar sesion primero");
+  const user = await ensure_methods_context();
+  if (!user?.id || !user?.email) return toast("No se pudo cargar el usuario");
+
+  const disableBtn = detailEl?.querySelector("#btnDisableFaceMethod");
+  set_button_loading(disableBtn, "Desactivando...", "Desactivar", true);
+  try {
+    const data = await patch_json(`/users/${user.id}/methods/faceid`, { habilitado: false });
+    invalidate_faceid_login_state(user.email);
+    await ensure_methods_context();
+    await sync_faceid_login_button();
+    toast(data?.message || "FaceID desactivado");
+    render();
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo desactivar FaceID"));
+  } finally {
+    set_button_loading(disableBtn, "Desactivando...", "Desactivar", false);
+  }
+}
+
+async function start_faceid_enrollment() {
+  if (!currentUserEmail) return toast("Debes iniciar sesion primero");
+  const user = await ensure_methods_context();
+  if (!user?.id || !user?.email) return toast("No se pudo cargar el usuario");
+
+  try {
+    await open_face_capture_modal("enroll", {
+      userId: user.id,
+      email: user.email,
+    });
+  } catch (err) {
+    toast(humanize_error(err, "No se pudo iniciar registro FaceID"));
   }
 }
 
@@ -1574,6 +2038,7 @@ async function go_to_dashboard() {
   hide(landing);
   show(dashboardApp);
   hide(mobileSignerApp);
+  close_face_capture_modal();
 
   state.view = "ledger";
   navItems.forEach(n => n.classList.toggle("active", n.dataset.view === state.view));
@@ -1588,14 +2053,17 @@ function go_to_landing() {
   show(landing);
   hide(dashboardApp);
   hide(mobileSignerApp);
+  close_face_capture_modal();
+  sync_faceid_login_button();
 }
 
 function preload_login_identifier() {
   const saved = localStorage.getItem("cryptolock_last_login");
-  if (!saved || !liEmail) return;
-
-  liEmail.value = saved;
-  if (liRemember) liRemember.checked = true;
+  if (saved && liEmail) {
+    liEmail.value = saved;
+    if (liRemember) liRemember.checked = true;
+  }
+  sync_faceid_login_button();
 }
 
 function valid_login_identifier(value) {
@@ -1657,6 +2125,11 @@ btnCloseLoginOtp?.addEventListener("click", close_login_otp);
 loginBackdrop?.addEventListener("click", (e) => e.target === loginBackdrop && close_login());
 loginOtpBackdrop?.addEventListener("click", (e) => e.target === loginOtpBackdrop && close_login_otp());
 btnCryptoLogin?.addEventListener("click", start_crypto_login);
+btnFaceLogin?.addEventListener("click", start_faceid_login);
+btnCloseFaceLogin?.addEventListener("click", close_face_capture_modal);
+faceLoginBackdrop?.addEventListener("click", (e) => e.target === faceLoginBackdrop && close_face_capture_modal());
+btnFacePrimaryAction?.addEventListener("click", run_face_primary_action);
+btnFaceRestartCamera?.addEventListener("click", restart_face_camera);
 btnCloseCryptoLogin?.addEventListener("click", close_crypto_login);
 cryptoLoginBackdrop?.addEventListener("click", (e) => e.target === cryptoLoginBackdrop && close_crypto_login());
 btnRefreshCryptoChallenge?.addEventListener("click", () => {
@@ -1679,6 +2152,7 @@ btnTogglePwd?.addEventListener("click", () => {
   liPassword.type = isPwd ? "text" : "password";
   btnTogglePwd.textContent = isPwd ? "Ocultar" : "Mostrar";
 });
+liEmail?.addEventListener("input", sync_faceid_login_button);
 
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1775,6 +2249,7 @@ loginOtpForm?.addEventListener("submit", async (e) => {
 
     toast(data?.message || "Acceso verificado ✅");
     currentUserEmail = data?.user?.email || pendingLoginIdentifier;
+    sync_faceid_login_button();
     close_login_otp();
     go_to_dashboard();
   } catch (err) {
@@ -1853,6 +2328,7 @@ document.addEventListener("keydown", (e) => {
   close_signup_otp();
   close_login();
   close_login_otp();
+  close_face_capture_modal();
   close_crypto_login();
 });
 
