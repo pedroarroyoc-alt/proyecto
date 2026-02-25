@@ -5,7 +5,7 @@ import os
 import secrets
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from urllib.parse import quote
 
 from cryptography.exceptions import InvalidSignature
@@ -295,7 +295,7 @@ class AuthService:
                 usuario_id=email,
                 accion="LOGIN_VERIFIED_TOTP",
                 recurso="/auth/login/verify-otp",
-                metadatos={"mfaMethod": "totp", "at": datetime.utcnow().isoformat()},
+                metadatos={"mfaMethod": "totp", "at": datetime.now(UTC).isoformat()},
             )
             return {"message": "Acceso verificado por TOTP", "user": {"email": email}, **tokens}
 
