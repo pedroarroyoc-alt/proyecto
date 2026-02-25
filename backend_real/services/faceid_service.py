@@ -47,6 +47,9 @@ class FaceIdService:
             self._haar_detector = cv2.CascadeClassifier(
                 cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
+    def _check_liveness_blur(self, face_gray) -> bool:
+        varianza = cv2.Laplacian(face_gray, cv2.CV_64F).var()
+        return varianza > self._liveness_blur_threshold
 
     @staticmethod
     def _normalize_user_key(user_key: str) -> str:
@@ -179,7 +182,14 @@ class FaceIdService:
                 confianza_lbph=None,
                 rostros_detectados=0,
             )
-
+        if not self._check_liveness_blur(face_gray):
+            print("[ALERTA] Posible ataque de presentación (Foto impresa o pantalla detectada).")
+            return FaceVerificationResult(
+                autorizado=False,
+                confianza_lbph=None, 
+                rostros_detectados=1,
+            )
+        
         recognizer = self._create_lbph()
         recognizer.read(str(model_path))
         processed = self._preprocess_face(face_gray)
