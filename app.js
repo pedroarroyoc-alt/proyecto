@@ -585,6 +585,15 @@ function get_device_key_record(email) {
   }
 }
 
+function extract_local_key_metadata(record) {
+  if (!record) return null;
+  return {
+    algorithm: String(record.algorithm || ""),
+    publicKeyPem: String(record.publicKeyPem || ""),
+    createdAt: String(record.createdAt || ""),
+  };
+}
+
 function set_device_key_record(email, record) {
   localStorage.setItem(get_crypto_storage_key(email), JSON.stringify(record));
 }
@@ -1618,29 +1627,220 @@ function current_items() {
   return byView.filter(i => `${i.title} ${i.subtitle} ${i.body}`.toLowerCase().includes(q));
 }
 
+function security_method_card(node) {
+  return `
+    <article class="auth-node auth-node--${node.state}">
+      <div class="auth-node-top">
+        <p class="auth-node-title">${node.name}</p>
+        <span class="auth-pill auth-pill--${node.state}">${node.short}</span>
+      </div>
+      <p class="auth-node-detail">${node.detail}</p>
+    </article>
+  `;
+}
+
+function stable_key_id(material, prefix = "key") {
+  const input = String(material || "");
+  if (!input) return `${prefix}_sin_id`;
+
+  // FNV-1a 32-bit hash for stable UI ids.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${prefix}_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function infer_key_algorithm(rawAlgorithm, publicKeyPem) {
+  const normalized = String(rawAlgorithm || "").trim().toUpperCase();
+  if (normalized.includes("RSA")) return "RSA-2048";
+  if (normalized.includes("ECDSA") || normalized.includes("EC")) return "ECDSA";
+  if (String(publicKeyPem || "").includes("BEGIN PUBLIC KEY")) return "RSA-2048";
+  return "N/D";
+}
+
+function vault_state_tone(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized.includes("activa")) return "active";
+  if (normalized.includes("revoc")) return "revoked";
+  if (normalized.includes("pend")) return "pending";
+  return "neutral";
+}
+
+function vault_state_badge(status) {
+  const tone = vault_state_tone(status);
+  return `<span class="vault-state vault-state--${tone}">${status}</span>`;
+}
+
+function build_vault_key_rows() {
+  const methods = state?.methods || {};
+  const backendPublicKeyPem = String(methods.cryptoPublicKeyPem || "");
+  const localKeyMeta = methods.localKeyMeta || null;
+  const cryptoEnabled = Boolean(methods.cryptoAuthEnabled);
+  const profileCreatedAt = String(methods.profileCreatedAt || "");
+  const rows = [];
+
+  if (backendPublicKeyPem) {
+    const isSameKey = Boolean(localKeyMeta?.publicKeyPem) && localKeyMeta.publicKeyPem === backendPublicKeyPem;
+    rows.push({
+      type: "Firma",
+      algorithm: infer_key_algorithm("RSA", backendPublicKeyPem),
+      id: stable_key_id(backendPublicKeyPem),
+      status: cryptoEnabled ? "Activa" : "Revocada",
+      date: isSameKey ? String(localKeyMeta.createdAt || "") : profileCreatedAt,
+    });
+  }
+
+  if (localKeyMeta?.publicKeyPem) {
+    const isSameAsBackend = backendPublicKeyPem && localKeyMeta.publicKeyPem === backendPublicKeyPem;
+    if (!isSameAsBackend) {
+      rows.push({
+        type: "Firma (dispositivo)",
+        algorithm: infer_key_algorithm(localKeyMeta.algorithm, localKeyMeta.publicKeyPem),
+        id: stable_key_id(localKeyMeta.publicKeyPem),
+        status: "Pendiente",
+        date: String(localKeyMeta.createdAt || ""),
+      });
+    }
+  }
+
+  return rows.sort((a, b) => {
+    const left = new Date(a.date).getTime();
+    const right = new Date(b.date).getTime();
+    if (Number.isNaN(left) && Number.isNaN(right)) return 0;
+    if (Number.isNaN(left)) return 1;
+    if (Number.isNaN(right)) return -1;
+    return right - left;
+  });
+}
+
 function render_detail(item) {
   if (!detailEl) return;
+
+  if (state.view === "vault") {
+    const hasSession = Boolean(currentUserEmail);
+    const rows = build_vault_key_rows();
+    const rowsHtml = rows.length
+      ? rows.map((row) => `
+        <tr>
+          <td>${row.type}</td>
+          <td>${row.algorithm}</td>
+          <td><code>${row.id}</code></td>
+          <td>${vault_state_badge(row.status)}</td>
+          <td>${fmt_ts(row.date || "-")}</td>
+        </tr>
+      `).join("")
+      : `
+        <tr>
+          <td class="vault-empty-cell" colspan="5">No hay llaves registradas para este usuario.</td>
+        </tr>
+      `;
+
+    detailEl.innerHTML = `
+      <div class="detail-card">
+        <h2>Boveda de llaves</h2>
+        <p><b>Usuario:</b> ${currentUserEmail || "(sin sesion)"}</p>
+        <p class="muted small"><b>Nota:</b> Solo metadatos. Nunca se muestra la clave privada.</p>
+        <div class="vault-table-wrap">
+          <table class="vault-table">
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Algoritmo</th>
+                <th>ID</th>
+                <th>Estado</th>
+                <th>Fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+        ${hasSession ? "" : '<p class="muted small">Inicia sesion para cargar metadatos de tus llaves.</p>'}
+      </div>
+    `;
+    return;
+  }
   
   if (state.view === "security") {
+    const hasSession = Boolean(currentUserEmail);
+    const emailVerified = Boolean(state?.security?.emailVerificado);
     const totpEnabled = Boolean(state?.security?.mfaHabilitado) && state?.security?.mfaMetodo === "totp";
-    const statusText = totpEnabled ? "Activo ✅" : "No configurado";
+    const totpPending = !totpEnabled && state?.security?.mfaMetodo === "totp_pending";
+    const cryptoEnabled = Boolean(state?.security?.cryptoAuthEnabled);
+    const cryptoPublicKeyConfigured = Boolean(state?.security?.cryptoPublicKeyConfigured);
+    const cryptoReady = cryptoEnabled && cryptoPublicKeyConfigured;
+    const faceIdEnabled = Boolean(state?.security?.faceIdEnabled);
+    const faceIdEnrolled = Boolean(state?.security?.faceIdEnrolled);
+    const faceReady = faceIdEnabled && faceIdEnrolled;
+
+    const methodNodes = [
+      {
+        name: "Correo + OTP",
+        state: emailVerified ? "active" : "inactive",
+        short: emailVerified ? "Activo" : "Pendiente",
+        detail: emailVerified
+          ? "Cuenta verificada por OTP de correo."
+          : "Falta verificar correo para dejar la cuenta activa.",
+      },
+      {
+        name: "TOTP (app autenticadora)",
+        state: totpEnabled ? "active" : (totpPending ? "pending" : "inactive"),
+        short: totpEnabled ? "Activo" : (totpPending ? "Pendiente" : "Inactivo"),
+        detail: totpEnabled
+          ? "Listo para validar login con codigo de 6 digitos."
+          : (totpPending
+              ? "TOTP iniciado. Falta confirmar el codigo para activarlo."
+              : "No configurado. Activalo desde esta seccion."),
+      },
+      {
+        name: "Firma criptografica",
+        state: cryptoReady ? "active" : (cryptoEnabled ? "pending" : "inactive"),
+        short: cryptoReady ? "Activo" : (cryptoEnabled ? "Pendiente" : "Inactivo"),
+        detail: cryptoReady
+          ? "Metodo listo para login por challenge QR."
+          : (cryptoEnabled
+              ? "Metodo habilitado pero falta llave publica en backend."
+              : "No habilitado en la cuenta."),
+      },
+      {
+        name: "FaceID",
+        state: faceReady ? "active" : (faceIdEnabled ? "pending" : "inactive"),
+        short: faceReady ? "Activo" : (faceIdEnabled ? "Pendiente" : "Inactivo"),
+        detail: faceReady
+          ? "Rostro registrado y listo para login."
+          : (faceIdEnabled
+              ? "Habilitado, pero falta registrar muestras faciales."
+              : "No habilitado en la cuenta."),
+      },
+    ];
+
+    const activeCount = methodNodes.filter(node => node.state === "active").length;
+    const pendingCount = methodNodes.filter(node => node.state === "pending").length;
+    const inactiveCount = methodNodes.filter(node => node.state === "inactive").length;
+    const roomHtml = methodNodes.map((node) => security_method_card(node)).join("");
+
+    const totpStatusText = totpEnabled
+      ? "Activo"
+      : (totpPending ? "Pendiente de confirmar" : "No configurado");
     const setupHtml = totpEnabled
-      ? `<p><b>Estado TOTP:</b> ${statusText}</p>
-         <p class="muted">Ya puedes usar códigos TOTP desde tu celular durante el login.</p>`
+      ? ""
       : `
-        <p><b>Estado TOTP:</b> ${statusText}</p>
-        <p class="muted">Configura TOTP para generar códigos en tu celular.</p>
-        <button class="btn" id="btnStartTotpSetup">Configurar TOTP en mi celular</button>
+        <p><b>Estado TOTP:</b> ${totpStatusText}</p>
+        <p class="muted">Configura TOTP para generar codigos en tu celular.</p>
+        <button class="btn" id="btnStartTotpSetup" ${hasSession ? "" : "disabled"}>${totpPending ? "Regenerar QR TOTP" : "Configurar TOTP en mi celular"}</button>
       `;
 
     const enrollment = state?.security?.enrollment || null;
     const enrollmentHtml = enrollment ? `
       <hr />
-      <h3>Activación pendiente</h3>
+      <h3>Activacion pendiente</h3>
       <p>1) Escanea este QR en tu app autenticadora.</p>
       <img class="totp-qr" alt="QR TOTP" src="${enrollment.qrUrl}" />
       <p class="muted">Si no puedes escanear, copia la clave manual: <code>${enrollment.secret}</code></p>
-      <p>2) Ingresa el código de 6 dígitos para activar:</p>
+      <p>2) Ingresa el codigo de 6 digitos para activar:</p>
       <div class="totp-confirm-row">
         <input id="totpCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="123456" />
         <button class="btn" id="btnConfirmTotp">Activar TOTP</button>
@@ -1650,8 +1850,18 @@ function render_detail(item) {
     detailEl.innerHTML = `
       <div class="detail-card">
         <h2>Seguridad de la cuenta (MFA)</h2>
-        <p><b>Usuario:</b> ${currentUserEmail || "(sin sesión)"}</p>
+        <p><b>Usuario:</b> ${currentUserEmail || "(sin sesion)"}</p>
+        <div class="security-room">
+          <div class="security-room-head">
+            <h3>Sala visual de autenticacion</h3>
+            <p class="muted small">Activos: <b>${activeCount}</b> | Pendientes: <b>${pendingCount}</b> | Inactivos: <b>${inactiveCount}</b></p>
+          </div>
+          <div class="auth-grid">
+            ${roomHtml}
+          </div>
+        </div>
         ${setupHtml}
+        ${hasSession ? "" : '<p class="muted small">Inicia sesion para configurar o activar metodos.</p>'}
         ${enrollmentHtml}
       </div>
     `;
@@ -1800,18 +2010,48 @@ async function fetch_current_user_profile() {
 async function ensure_security_context() {
   if (!state.security) state.security = {};
   const user = await fetch_current_user_profile();
-  if (!user?.id) return null;
+  if (!user?.id) {
+    state.security.userId = "";
+    state.security.emailVerificado = false;
+    state.security.mfaHabilitado = false;
+    state.security.mfaMetodo = "none";
+    state.security.cryptoAuthEnabled = false;
+    state.security.cryptoPublicKeyConfigured = false;
+    state.security.faceIdEnabled = false;
+    state.security.faceIdEnrolled = false;
+    state.security.enrollment = null;
+    return null;
+  }
 
   state.security.userId = user.id;
+  state.security.emailVerificado = Boolean(user.emailVerificado);
   state.security.mfaHabilitado = Boolean(user.mfaHabilitado);
   state.security.mfaMetodo = user.mfaMetodo || "none";
+  state.security.cryptoAuthEnabled = Boolean(user.cryptoAuthEnabled);
+  state.security.cryptoPublicKeyConfigured = Boolean(
+    user.cryptoPublicKeyConfigured || user.cryptoPublicKeyPem
+  );
+  state.security.faceIdEnabled = Boolean(user.faceIdEnabled);
+  state.security.faceIdEnrolled = Boolean(user.faceIdEnrolled);
   return user;
 }
 
 async function ensure_methods_context() {
   if (!state.methods) state.methods = {};
   const user = await fetch_current_user_profile();
-  if (!user?.id) return null;
+  if (!user?.id) {
+    state.methods.userId = "";
+    state.methods.email = "";
+    state.methods.cryptoAuthEnabled = false;
+    state.methods.cryptoPublicKeyConfigured = false;
+    state.methods.cryptoPublicKeyPem = "";
+    state.methods.localPrivateKeyAvailable = false;
+    state.methods.localKeyMeta = null;
+    state.methods.profileCreatedAt = "";
+    state.methods.faceIdEnabled = false;
+    state.methods.faceIdEnrolled = false;
+    return null;
+  }
 
   const email = normalize_email(user.email || currentUserEmail);
   const localRecord = get_device_key_record(email);
@@ -1822,7 +2062,10 @@ async function ensure_methods_context() {
   state.methods.cryptoPublicKeyConfigured = Boolean(
     user.cryptoPublicKeyConfigured || user.cryptoPublicKeyPem
   );
+  state.methods.cryptoPublicKeyPem = String(user.cryptoPublicKeyPem || "");
   state.methods.localPrivateKeyAvailable = Boolean(localRecord?.privateKeyPkcs8B64);
+  state.methods.localKeyMeta = extract_local_key_metadata(localRecord);
+  state.methods.profileCreatedAt = String(user.fechaCreacion || "");
   state.methods.faceIdEnabled = Boolean(user.faceIdEnabled);
   state.methods.faceIdEnrolled = Boolean(user.faceIdEnrolled);
   return user;
@@ -1833,6 +2076,7 @@ async function clear_local_crypto_key_for_current_device() {
   if (!user?.email) return toast("No se pudo obtener el correo del usuario");
   clear_device_key_record(user.email);
   state.methods.localPrivateKeyAvailable = false;
+  state.methods.localKeyMeta = null;
   toast("Llave privada local eliminada de este dispositivo");
   render();
 }
@@ -1851,6 +2095,7 @@ async function enable_crypto_signature_method() {
   try {
     clear_device_key_record(user.email);
     state.methods.localPrivateKeyAvailable = false;
+    state.methods.localKeyMeta = null;
     state.methods.setupLink = build_mobile_setup_link({ email: user.email, userId: user.id });
     state.methods.setupQrUrl = get_qr_code_url(state.methods.setupLink, 260);
     const hostHint = mobile_qr_host_hint();
@@ -2281,6 +2526,11 @@ navItems.forEach((btn) => {
       return;
     }
 
+    if (state.view === "vault") {
+      ensure_methods_context().finally(render);
+      return;
+    }
+
     render();
   });
 });
@@ -2309,6 +2559,11 @@ btnRefresh?.addEventListener("click", () => {
   }
 
   if (state.view === "methods") {
+    ensure_methods_context().finally(render);
+    return;
+  }
+
+  if (state.view === "vault") {
     ensure_methods_context().finally(render);
     return;
   }

@@ -27,6 +27,31 @@ class FaceVerificationResult:
 
 
 class FaceIdService:
+    @staticmethod
+    def _read_float_env(name: str, default: float) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return float(default)
+        try:
+            return float(raw)
+        except ValueError:
+            return float(default)
+
+    @staticmethod
+    def _read_int_env(name: str, default: int) -> int:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return int(default)
+        try:
+            return int(raw)
+        except ValueError:
+            return int(default)
+
+    @staticmethod
+    def _read_str_env(name: str, default: str) -> str:
+        raw = os.getenv(name, "").strip()
+        return raw or default
+
     def __init__(self) -> None:
         base_path = Path(__file__).resolve().parents[1]
         self._samples_path = Path(
@@ -36,8 +61,20 @@ class FaceIdService:
             os.getenv("FACEID_MODELS_DIR", str(base_path / "faceid_models"))
         )
         self._face_size = (160, 160)
-        self._confidence_threshold = float(os.getenv("FACEID_CONFIDENCE_THRESHOLD", "65"))
-        self._min_samples = int(os.getenv("FACEID_MIN_SAMPLES", "8"))
+        self._confidence_threshold = max(
+            0.0, self._read_float_env("FACEID_CONFIDENCE_THRESHOLD", 90.0)
+        )
+        self._liveness_blur_threshold = max(
+            0.0, self._read_float_env("FACEID_LIVENESS_BLUR_THRESHOLD", 45.0)
+        )
+        # Modos soportados:
+        # - off: desactiva el chequeo liveness por blur
+        # - warn: registra alerta pero no bloquea login
+        # - enforce: bloquea login cuando blur < threshold
+        self._liveness_mode = self._read_str_env("FACEID_LIVENESS_MODE", "warn").lower()
+        if self._liveness_mode not in {"off", "warn", "enforce"}:
+            self._liveness_mode = "warn"
+        self._min_samples = max(1, self._read_int_env("FACEID_MIN_SAMPLES", 8))
 
         self._samples_path.mkdir(parents=True, exist_ok=True)
         self._models_path.mkdir(parents=True, exist_ok=True)
@@ -47,9 +84,15 @@ class FaceIdService:
             self._haar_detector = cv2.CascadeClassifier(
                 cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
+
     def _check_liveness_blur(self, face_gray) -> bool:
+        if cv2 is None:
+            raise RuntimeError("FaceID requiere OpenCV para validar liveness.")
         varianza = cv2.Laplacian(face_gray, cv2.CV_64F).var()
         return varianza > self._liveness_blur_threshold
+
+    def _should_enforce_liveness(self) -> bool:
+        return self._liveness_mode == "enforce"
 
     @staticmethod
     def _normalize_user_key(user_key: str) -> str:
@@ -182,19 +225,31 @@ class FaceIdService:
                 confianza_lbph=None,
                 rostros_detectados=0,
             )
-        if not self._check_liveness_blur(face_gray):
-            print("[ALERTA] Posible ataque de presentación (Foto impresa o pantalla detectada).")
-            return FaceVerificationResult(
-                autorizado=False,
-                confianza_lbph=None, 
-                rostros_detectados=1,
+
+        liveness_ok = self._check_liveness_blur(face_gray) if self._liveness_mode != "off" else True
+        if not liveness_ok:
+            print(
+                "[ALERTA] Posible ataque de presentacion por blur "
+                f"(threshold={self._liveness_blur_threshold}, mode={self._liveness_mode})."
             )
-        
+            if self._should_enforce_liveness():
+                return FaceVerificationResult(
+                    autorizado=False,
+                    confianza_lbph=None,
+                    rostros_detectados=1,
+                )
+
         recognizer = self._create_lbph()
         recognizer.read(str(model_path))
         processed = self._preprocess_face(face_gray)
         label, confidence = recognizer.predict(processed)
         authorized = bool(int(label) == 1 and float(confidence) <= self._confidence_threshold)
+        if not authorized:
+            print(
+                "[FACEID] Denegado por reconocimiento "
+                f"(label={label}, confidence={float(confidence):.2f}, "
+                f"threshold={self._confidence_threshold})."
+            )
         return FaceVerificationResult(
             autorizado=authorized,
             confianza_lbph=float(confidence),
