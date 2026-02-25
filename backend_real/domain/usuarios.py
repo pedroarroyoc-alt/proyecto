@@ -18,7 +18,7 @@ class Usuario:
     email: str
     nombre: str
 
-    # 🔐 Flujo crear cuenta → verificar → activar
+    # Flujo crear cuenta → verificar → activar
     estado: EstadoUsuario = EstadoUsuario.PENDIENTE
     emailVerificado: bool = False
 
