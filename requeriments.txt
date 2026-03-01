@@ -1,0 +1,6 @@
+fastapi
+cryptography
+pydantic
+email-validator
+pytest
+uvicorn
