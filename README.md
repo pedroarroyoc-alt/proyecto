@@ -45,14 +45,6 @@ pip install -r requirements.txt
 5. Acceso registrado en blockchain
 ```
 
-## Ejecutar Tests
-
-```bash
-pytest
-
-# Con cobertura
-pytest --cov=apps --cov-report=html
-```
 
 
 ## Equipo de Desarrollo
