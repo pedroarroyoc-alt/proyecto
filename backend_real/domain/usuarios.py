@@ -80,6 +80,7 @@ class Usuario:
             "mfaHabilitado": bool(getattr(self, "mfaHabilitado", False)),
             "mfaMetodo": getattr(self, "mfaMetodo", "none"),
             "cryptoAuthEnabled": bool(getattr(self, "cryptoAuthEnabled", False)),
+            "cryptoPublicKeyPem": str(getattr(self, "cryptoPublicKeyPem", "") or ""),
             "cryptoPublicKeyConfigured": bool(getattr(self, "cryptoPublicKeyPem", "")),
             "faceIdEnabled": bool(getattr(self, "faceIdEnabled", False)),
             "faceIdEnrolled": bool(getattr(self, "faceIdEnrolled", False)),

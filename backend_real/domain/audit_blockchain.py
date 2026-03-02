@@ -17,6 +17,8 @@ class RegistroAcceso:
     recurso: str
     ip: str
     metadatos: Dict[str, Any]
+    ciudad: str = "Desconocida"
+    pais: str = "Desconocido"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -196,33 +198,3 @@ class Blockchain:
         return len(self.__cadena)
 
 
-# ==========================================================
-# DEMO (si lo ejecutas directo)
-# ==========================================================
-if __name__ == "__main__":
-    print("--- INICIANDO AUDITORÍA TIPO BLOCKCHAIN (CryptoLock) ---")
-    bc = Blockchain(dificultad=3)
-
-    r1 = RegistroAcceso(
-        usuarioId="20240535K",
-        accion="ACCESO_BOVEDA",
-        recurso="Servidor_UNI",
-        ip="192.168.1.10",
-        metadatos={"factor": "OTP", "resultado": "OK"},
-    )
-
-    bloque = bc.agregar_registro(r1)
-    print("Registrado:", bloque.resumen())
-
-    encontrados = bc.buscar_por_usuario("20240535K")
-    print("Bloques del usuario:", [b.resumen() for b in encontrados])
-
-    print("¿Cadena íntegra?:", bc.validar_cadena())
-
-    print("\n--- SIMULACIÓN DE ATAQUE (manipulación interna) ---")
-    # Nota: En Python se puede “romper” el encapsulamiento a propósito (como demo).
-    # Esto simula que alguien alteró datos ya registrados.
-    bc._Blockchain__cadena[1]._Bloque__datos["accion"] = "ACCESO_CONCEDIDO_INTRUSO"  # type: ignore
-
-    print("¿Cadena íntegra tras hackeo?:", bc.validar_cadena())
-    print("ALERTA: la cadena detectó manipulación (hash no coincide).")

@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 from fastapi import APIRouter
 
-from services.audit_service import get_audit_service
+from services.audit_service import AuditService
 
 
 class AuditController:
-    def __init__(self) -> None:
-        self._audit = get_audit_service()
+    def __init__(self, audit_service: AuditService) -> None:
+        self._audit = audit_service
         self.router = APIRouter(prefix="/audit", tags=["audit"])
         self._register_routes()
 
@@ -23,6 +25,3 @@ class AuditController:
     def chain(self) -> dict:
         return self._audit.exportar_cadena()
 
-
-audit_controller = AuditController()
-router = audit_controller.router

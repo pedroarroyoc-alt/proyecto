@@ -152,6 +152,8 @@ const CRYPTO_DEVICE_KEY_PREFIX = "cryptolock_crypto_device_key_v1:";
 const CRYPTO_CHALLENGE_POLL_MS = 2000;
 const FACEID_ENROLL_SAMPLES = 10;
 const FACEID_CAPTURE_INTERVAL_MS = 140;
+const FACEID_LOGIN_CAPTURE_ATTEMPTS = 3;
+const FACEID_LOGIN_CAPTURE_DELAY_MS = 180;
 const APP_BUILD = "faceid-full01";
 console.info(`[cryptolock-ui] build ${APP_BUILD}`);
 
@@ -849,10 +851,39 @@ async function verify_faceid_login_with_capture() {
 
   set_button_loading(btnFacePrimaryAction, "Verificando...", "Verificar FaceID", true);
   try {
-    set_face_capture_status("Capturando imagen...");
-    const imageBase64 = capture_face_frame_base64();
-    set_face_capture_status("Validando rostro en backend...");
-    const data = await post_json("/auth/faceid/login", { email, imageBase64 });
+    set_face_capture_status(`Capturando ${FACEID_LOGIN_CAPTURE_ATTEMPTS} imagenes...`);
+    const captures = await capture_face_samples(
+      FACEID_LOGIN_CAPTURE_ATTEMPTS,
+      FACEID_LOGIN_CAPTURE_DELAY_MS
+    );
+
+    let data = null;
+    let lastError = null;
+    for (let i = 0; i < captures.length; i += 1) {
+      const imageBase64 = captures[i];
+      set_face_capture_status(`Validando rostro (${i + 1}/${captures.length})...`);
+      try {
+        data = await post_json("/auth/faceid/login", { email, imageBase64 });
+        break;
+      } catch (err) {
+        lastError = err;
+        const message = String(humanize_error(err, "") || "").toLowerCase();
+        const retryable = (
+          message.includes("rostro no coincide")
+          || message.includes("no se detecto")
+          || message.includes("imagen borrosa")
+          || message.includes("liveness")
+        );
+        if (!retryable || i === captures.length - 1) {
+          throw err;
+        }
+      }
+    }
+
+    if (!data) {
+      throw lastError || new Error("No se pudo verificar FaceID");
+    }
+
     currentUserEmail = data?.user?.email || email;
     invalidate_faceid_login_state(email);
     await sync_faceid_login_button();
@@ -1595,11 +1626,19 @@ function default_items() {
 
 function normalize_block_to_item(block) {
   const datos = block?.datos || {};
+  const city = String(datos.ciudad || "").trim();
+  const country = String(datos.pais || "").trim();
+  const locationLabel = city || country
+    ? [city || null, country || null].filter(Boolean).join(", ")
+    : "";
+  const baseSubtitle = datos.usuarioId || datos.mensaje || "Sistema";
+  const subtitle = locationLabel ? `${baseSubtitle} - ${locationLabel}` : baseSubtitle;
+
   return {
     id: `BLK-${block.indice}`,
     view: "ledger",
     title: `${datos.accion || "GENESIS"} #${block.indice}`,
-    subtitle: datos.usuarioId || datos.mensaje || "Sistema",
+    subtitle,
     status: "OK",
     createdAt: block.timestamp,
     body: JSON.stringify(block, null, 2),
@@ -1970,6 +2009,12 @@ function render_detail(item) {
   }
 
   if (item.view === "ledger" && item.raw) {
+    const datos = item.raw.datos || {};
+    const locationLabel = [datos.ciudad || "", datos.pais || ""]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(", ");
+
     detailEl.innerHTML = `
       <div class="detail-card">
         <h2>Bloque #${item.raw.indice}</h2>
@@ -1977,6 +2022,7 @@ function render_detail(item) {
         <p><b>Hash anterior:</b> <code>${item.raw.hash_anterior}</code></p>
         <p><b>Nonce:</b> ${item.raw.nonce} | <b>Dificultad:</b> ${item.raw.dificultad}</p>
         <p><b>Fecha:</b> ${fmt_ts(item.raw.timestamp)}</p>
+        <p><b>Ubicacion:</b> ${locationLabel || "No disponible"}</p>
         <pre>${JSON.stringify(item.raw.datos, null, 2)}</pre>
       </div>
     `;

@@ -11,14 +11,14 @@ from typing import Dict, List, Optional
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import APIRouter, HTTPException, Query 
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, EmailStr, field_validator
 
 from domain.usuarios import EstadoUsuario, UsuarioHumano
-from services.audit_service import get_audit_service
-from services.faceid_service import faceid_service
-from services.email_service import send_otp_email
-from services.security_service import PasswordHasher, otp_service, totp_service
+from services.audit_service import AuditService
+from services.email_service import EmailService
+from services.faceid_service import FaceIdService
+from services.security_service import OTPService, PasswordHasher, TotpService
 
 
 # =========================
@@ -226,29 +226,45 @@ class UserRepository:
 # OTP Manager (memoria)
 # =========================
 class OtpManager:
+    def __init__(self, otp_service: OTPService) -> None:
+        self._otp_service = otp_service
+
     def generate_for_email(self, email: str) -> str:
-        return otp_service.create(email=email.strip().lower(), purpose="email_verification", ttl_seconds=300)
+        return self._otp_service.create(email=email.strip().lower(), purpose="email_verification", ttl_seconds=300)
 
     def get_expected(self, email: str) -> Optional[str]:
         # El OTP ya no se guarda en claro para producción.
         return None       
 
     def verify(self, email: str, otp: str) -> bool:
-        ok, _ = otp_service.verify(email=email.strip().lower(), purpose="email_verification", otp=otp)
+        ok, _ = self._otp_service.verify(email=email.strip().lower(), purpose="email_verification", otp=otp)
         return ok
 
     def clear(self, email: str) -> None:
-        otp_service.clear(email=email.strip().lower(), purpose="email_verification")
+        self._otp_service.clear(email=email.strip().lower(), purpose="email_verification")
 
 # =========================
 # Service (lógica negocio)
 # =========================
 class UserService:
-    def __init__(self, repository: UserRepository, otp_manager: OtpManager, password_hasher: PasswordHasher) -> None:
+    def __init__(
+        self,
+        repository: UserRepository,
+        otp_manager: OtpManager,
+        password_hasher: PasswordHasher,
+        *,
+        audit_service: AuditService,
+        faceid_service: FaceIdService,
+        email_service: EmailService,
+        totp_service: TotpService,
+    ) -> None:
         self._repository = repository
         self._otp_manager = otp_manager
         self._password_hasher = password_hasher
-        self._audit = get_audit_service()
+        self._audit = audit_service
+        self._faceid_service = faceid_service
+        self._email_service = email_service
+        self._totp_service = totp_service
 
     @staticmethod
     def _validate_crypto_public_key_pem(public_key_pem: str) -> str:
@@ -282,7 +298,7 @@ class UserService:
             email_sent = True
             message = "Esta cuenta ya existe, pero aún no está verificada. Te reenviamos un OTP."
             try:
-                send_otp_email(email, otp)
+                self._email_service.send_otp_email(email, otp)
             except Exception as exc:
                 email_sent = False
                 message = (
@@ -323,7 +339,7 @@ class UserService:
         message = "Usuario creado. Revisa tu correo para el código de verificación."
 
         try:
-            send_otp_email(email, otp)
+            self._email_service.send_otp_email(email, otp)
         except Exception as exc:
             email_sent = False
             message = (
@@ -387,7 +403,7 @@ class UserService:
         message = "Te reenviamos el OTP de verificación."
 
         try:
-            send_otp_email(email, otp)
+            self._email_service.send_otp_email(email, otp)
         except Exception as exc:
             email_sent = False
             message = "No se pudo enviar el OTP por correo. Verifica la configuración SMTP."
@@ -497,7 +513,7 @@ class UserService:
             raise UserError(message="Debes enviar imagenes para registrar FaceID", status_code=400)
 
         try:
-            accepted = faceid_service.enroll_user(user.email, images, overwrite=True)
+            accepted = self._faceid_service.enroll_user(user.email, images, overwrite=True)
         except ValueError as exc:
             raise UserError(message=str(exc), status_code=400) from exc
         except RuntimeError as exc:
@@ -525,7 +541,7 @@ class UserService:
         if not user:
             raise UserError(message="Usuario no encontrado", status_code=404)
 
-        secret = totp_service.generate_secret()
+        secret = self._totp_service.generate_secret()
         user.totpSecret = secret
         user.mfaMetodo = "totp_pending"
         recovery_codes = [secrets.token_hex(4) for _ in range(8)]
@@ -541,7 +557,7 @@ class UserService:
 
         return {
             "message": "Escanea el QR/URI y confirma con un código TOTP.",
-            "otpauthUri": totp_service.provisioning_uri(email=user.email, secret=secret),
+            "otpauthUri": self._totp_service.provisioning_uri(email=user.email, secret=secret),
             "secret": secret,
             "recoveryCodes": recovery_codes,
         }
@@ -552,7 +568,7 @@ class UserService:
             raise UserError(message="Usuario no encontrado", status_code=404)
         if not user.totpSecret:
             raise UserError(message="No hay enrolamiento TOTP pendiente", status_code=400)
-        if not totp_service.verify(secret=user.totpSecret, code=payload.codigo):
+        if not self._totp_service.verify(secret=user.totpSecret, code=payload.codigo):
             raise UserError(message="Código TOTP inválido", status_code=401)
 
         user.mfaHabilitado = True
@@ -587,6 +603,12 @@ class UserService:
 
     def list_users(self) -> List[dict]:
         return [self.to_public(u) for u in self._repository.list_all()]
+
+    def get_user_by_email(self, email: str) -> dict:
+        user = self._repository.get_by_email(str(email).strip().lower())
+        if not user:
+            raise UserError(message="Usuario no encontrado", status_code=404)
+        return self.to_public(user)
 
     def get_user(self, user_id: str) -> dict:
         user = self._repository.get_by_id(user_id)
@@ -696,18 +718,8 @@ class UserController:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     def get_user_by_email(self, email: EmailStr = Query(...)) -> dict:
-        user = self._service._repository.get_by_email(str(email).strip().lower())
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        return self._service.to_public(user)
+        try:
+            return self._service.get_user_by_email(str(email))
+        except UserError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-# =========================
-# Wiring (instancias)
-# =========================
-user_repository = UserRepository()
-otp_manager = OtpManager()
-password_hasher = PasswordHasher()
-user_service = UserService(repository=user_repository, otp_manager=otp_manager, password_hasher=password_hasher)
-user_controller = UserController(service=user_service)
-
-router = user_controller.router

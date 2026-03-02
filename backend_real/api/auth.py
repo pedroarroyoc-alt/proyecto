@@ -14,19 +14,18 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, EmailStr, field_validator
 
-from api.users import password_hasher, user_repository
-from services.audit_service import get_audit_service
-from services.email_service import EmailDeliveryError, send_otp_email
-from services.faceid_service import faceid_service
+from api.users import UserRepository
+from services.audit_service import AuditService
+from services.email_service import EmailDeliveryError, EmailService
+from services.faceid_service import FaceIdService
 from services.security_service import (
-    otp_service,
-    rate_limiter,
-    security_store,
-    token_service,
-    totp_service,
+    OTPService,
+    PasswordHasher,
+    RateLimiter,
+    SecurityDataStore,
+    TokenService,
+    TotpService,
 )
-
-router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class LoginRequest(BaseModel):
@@ -118,10 +117,30 @@ class FaceIdLoginRequest(BaseModel):
 
 
 class AuthService:
-    def __init__(self) -> None:
-        self._users_repo = user_repository
+    def __init__(
+        self,
+        *,
+        users_repo: UserRepository,
+        password_hasher: PasswordHasher,
+        audit_service: AuditService,
+        email_service: EmailService,
+        faceid_service: FaceIdService,
+        otp_service: OTPService,
+        rate_limiter: RateLimiter,
+        security_store: SecurityDataStore,
+        token_service: TokenService,
+        totp_service: TotpService,
+    ) -> None:
+        self._users_repo = users_repo
         self._pwd_hasher = password_hasher
-        self._audit = get_audit_service()
+        self._audit = audit_service
+        self._email_service = email_service
+        self._faceid_service = faceid_service
+        self._otp_service = otp_service
+        self._rate_limiter = rate_limiter
+        self._security_store = security_store
+        self._token_service = token_service
+        self._totp_service = totp_service
         self._crypto_challenge_ttl = int(os.getenv("CRYPTO_CHALLENGE_TTL_SECONDS", "180"))
         self._crypto_login_grant_ttl = int(os.getenv("CRYPTO_LOGIN_GRANT_TTL_SECONDS", "120"))
         self._crypto_max_attempts = int(os.getenv("CRYPTO_CHALLENGE_MAX_ATTEMPTS", "5"))
@@ -138,9 +157,8 @@ class AuthService:
     def _now_ts() -> int:
         return int(time.time())
 
-    @staticmethod
-    def _build_totp_enrollment(email: str, secret: str) -> dict:
-        otpauth_uri = totp_service.provisioning_uri(email=email, secret=secret)
+    def _build_totp_enrollment(self, email: str, secret: str) -> dict:
+        otpauth_uri = self._totp_service.provisioning_uri(email=email, secret=secret)
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={quote(otpauth_uri, safe='')}"
         return {
             "secret": secret,
@@ -177,7 +195,7 @@ class AuthService:
         email = str(payload.email).strip().lower()
         password = (payload.password or "").strip()
 
-        allowed, retry_after = rate_limiter.check(
+        allowed, retry_after = self._rate_limiter.check(
             action="login_request",
             key=email,
             window_seconds=60,
@@ -193,7 +211,7 @@ class AuthService:
 
         if not user.autenticar():
             if not bool(getattr(user, "emailVerificado", False)):
-                otp = otp_service.create(email=email, purpose="email_verification", ttl_seconds=300)
+                otp = self._otp_service.create(email=email, purpose="email_verification", ttl_seconds=300)
                 email_sent = True
                 response = {
                     "message": "Tu cuenta existe pero falta verificar el correo. Te enviamos un OTP de verificacion.",
@@ -203,7 +221,7 @@ class AuthService:
                     "requiresEmailVerification": True,
                 }
                 try:
-                    send_otp_email(email, otp)
+                    self._email_service.send_otp_email(email, otp)
                 except EmailDeliveryError as exc:
                     email_sent = False
                     response["message"] = "Tu cuenta no esta verificada y no se pudo enviar el OTP por correo"
@@ -228,7 +246,7 @@ class AuthService:
 
         has_totp_configured = bool(user.totpSecret)
         if not has_totp_configured:
-            secret = totp_service.generate_secret()
+            secret = self._totp_service.generate_secret()
             user.totpSecret = secret
             user.mfaMetodo = "totp_pending"
             user.mfaHabilitado = False
@@ -267,7 +285,7 @@ class AuthService:
         email = str(payload.email).strip().lower()
         code = self._normalize_otp(payload.otp)
 
-        allowed, retry_after = rate_limiter.check(
+        allowed, retry_after = self._rate_limiter.check(
             action="login_verify",
             key=email,
             window_seconds=300,
@@ -283,14 +301,14 @@ class AuthService:
         if not user.totpSecret:
             raise HTTPException(status_code=400, detail="Debes configurar TOTP antes de ingresar")
 
-        if totp_service.verify(secret=user.totpSecret, code=code):
+        if self._totp_service.verify(secret=user.totpSecret, code=code):
             if not bool(user.mfaHabilitado) or getattr(user, "mfaMetodo", "none") != "totp":
                 user.mfaHabilitado = True
                 user.mfaMetodo = "totp"
                 if hasattr(user, "actualizar_nivel_confianza"):
                     user.actualizar_nivel_confianza()
                 self._users_repo.save(user)
-            tokens = token_service.issue_tokens(email)
+            tokens = self._token_service.issue_tokens(email)
             self._audit.registrar_evento(
                 usuario_id=email,
                 accion="LOGIN_VERIFIED_TOTP",
@@ -303,7 +321,7 @@ class AuthService:
             if self._pwd_hasher.verify_password(code, hashed):
                 user.recoveryCodesHash.remove(hashed)
                 self._users_repo.save(user)
-                tokens = token_service.issue_tokens(email)
+                tokens = self._token_service.issue_tokens(email)
                 self._audit.registrar_evento(
                     usuario_id=email,
                     accion="LOGIN_VERIFIED_RECOVERY",
@@ -317,7 +335,7 @@ class AuthService:
     # ======== Login challenge + firma criptografica ========
     def request_crypto_challenge(self, payload: CryptoChallengeRequest) -> dict:
         email = str(payload.email).strip().lower()
-        allowed, retry_after = rate_limiter.check(
+        allowed, retry_after = self._rate_limiter.check(
             action="crypto_challenge_request",
             key=email,
             window_seconds=60,
@@ -332,7 +350,7 @@ class AuthService:
 
         challenge_id = str(uuid.uuid4())
         challenge_value = secrets.token_urlsafe(48)
-        security_store.put_crypto_challenge(
+        self._security_store.put_crypto_challenge(
             challenge_id=challenge_id,
             email=email,
             challenge=challenge_value,
@@ -362,7 +380,7 @@ class AuthService:
         challenge_id = payload.challengeId
         signature_raw = payload.signature.strip()
 
-        allowed, retry_after = rate_limiter.check(
+        allowed, retry_after = self._rate_limiter.check(
             action="crypto_challenge_verify",
             key=f"{email}:{challenge_id}",
             window_seconds=300,
@@ -375,7 +393,7 @@ class AuthService:
         user = self._validate_active_user_for_login(email)
         self._assert_crypto_method_enabled(user)
 
-        row = security_store.get_crypto_challenge(challenge_id)
+        row = self._security_store.get_crypto_challenge(challenge_id)
         if not row:
             raise HTTPException(status_code=404, detail="Challenge no encontrado")
         if row["email"] != email:
@@ -385,17 +403,17 @@ class AuthService:
 
         now = self._now_ts()
         if int(row["expires_at"]) < now:
-            security_store.mark_crypto_challenge_failed(challenge_id)
+            self._security_store.mark_crypto_challenge_failed(challenge_id)
             raise HTTPException(status_code=400, detail="Challenge expirado")
 
         if int(row["attempts"]) >= int(row["max_attempts"]):
-            security_store.mark_crypto_challenge_failed(challenge_id)
+            self._security_store.mark_crypto_challenge_failed(challenge_id)
             raise HTTPException(status_code=429, detail="Challenge bloqueado por demasiados intentos")
 
         try:
             signature_bytes = base64.b64decode(signature_raw, validate=True)
         except Exception:
-            security_store.increment_crypto_challenge_attempt(challenge_id)
+            self._security_store.increment_crypto_challenge_attempt(challenge_id)
             raise HTTPException(status_code=400, detail="Firma en base64 invalida")
 
         try:
@@ -413,12 +431,12 @@ class AuthService:
                 hashes.SHA256(),
             )
         except InvalidSignature:
-            security_store.increment_crypto_challenge_attempt(challenge_id)
-            current = security_store.get_crypto_challenge(challenge_id) or {}
+            self._security_store.increment_crypto_challenge_attempt(challenge_id)
+            current = self._security_store.get_crypto_challenge(challenge_id) or {}
             attempts = int(current.get("attempts", 0))
             max_attempts = int(current.get("max_attempts", self._crypto_max_attempts))
             if attempts >= max_attempts:
-                security_store.mark_crypto_challenge_failed(challenge_id)
+                self._security_store.mark_crypto_challenge_failed(challenge_id)
 
             self._audit.registrar_evento(
                 usuario_id=email,
@@ -429,7 +447,7 @@ class AuthService:
             raise HTTPException(status_code=401, detail="Firma invalida")
 
         login_grant = secrets.token_urlsafe(32)
-        security_store.mark_crypto_challenge_verified(
+        self._security_store.mark_crypto_challenge_verified(
             challenge_id=challenge_id,
             login_grant=login_grant,
             grant_ttl_seconds=self._crypto_login_grant_ttl,
@@ -450,14 +468,14 @@ class AuthService:
         }
 
     def crypto_challenge_status(self, challenge_id: str) -> dict:
-        row = security_store.get_crypto_challenge(challenge_id)
+        row = self._security_store.get_crypto_challenge(challenge_id)
         if not row:
             raise HTTPException(status_code=404, detail="Challenge no encontrado")
 
         now = self._now_ts()
         status = row["status"]
         if status == "pending" and int(row["expires_at"]) < now:
-            security_store.mark_crypto_challenge_failed(challenge_id)
+            self._security_store.mark_crypto_challenge_failed(challenge_id)
             status = "expired"
 
         login_grant = ""
@@ -481,7 +499,7 @@ class AuthService:
         if not challenge_id or not grant:
             raise HTTPException(status_code=400, detail="challengeId y loginGrant son obligatorios")
 
-        consumed = security_store.consume_crypto_login_grant(challenge_id=challenge_id, login_grant=grant)
+        consumed = self._security_store.consume_crypto_login_grant(challenge_id=challenge_id, login_grant=grant)
         if not consumed:
             raise HTTPException(status_code=401, detail="Grant invalido o expirado")
 
@@ -489,7 +507,7 @@ class AuthService:
         user = self._validate_active_user_for_login(email)
         self._assert_crypto_method_enabled(user)
 
-        tokens = token_service.issue_tokens(email)
+        tokens = self._token_service.issue_tokens(email)
         self._audit.registrar_evento(
             usuario_id=email,
             accion="LOGIN_CRYPTO_GRANTED",
@@ -504,7 +522,7 @@ class AuthService:
         if not image_b64:
             raise HTTPException(status_code=400, detail="imageBase64 es obligatorio")
 
-        allowed, retry_after = rate_limiter.check(
+        allowed, retry_after = self._rate_limiter.check(
             action="faceid_login",
             key=email,
             window_seconds=60,
@@ -518,7 +536,7 @@ class AuthService:
         self._assert_faceid_method_enabled(user)
 
         try:
-            result = faceid_service.verify_user(email, image_b64)
+            result = self._faceid_service.verify_user(email, image_b64)
         except FileNotFoundError:
             user.faceIdEnrolled = False
             if hasattr(user, "actualizar_nivel_confianza"):
@@ -531,6 +549,7 @@ class AuthService:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         if not result.autorizado:
+            denial_reason = str(getattr(result, "motivo_denegacion", "") or "")
             self._audit.registrar_evento(
                 usuario_id=email,
                 accion="LOGIN_FACEID_DENIED",
@@ -538,11 +557,24 @@ class AuthService:
                 metadatos={
                     "confidence": result.confianza_lbph,
                     "facesDetected": result.rostros_detectados,
+                    "reason": denial_reason or "unknown",
+                    "similarityBest": result.similitud_maxima,
+                    "similarityTopK": result.similitud_topk,
+                    "similarityMatches": result.coincidencias,
+                    "similarityThreshold": result.umbral_similitud,
                 },
             )
-            raise HTTPException(status_code=401, detail="Rostro no autorizado")
+            if denial_reason == "no_face_detected":
+                detail = "No se detecto un rostro valido. Centra tu cara y mejora la iluminacion."
+            elif denial_reason == "liveness_blur_failed":
+                detail = "Imagen borrosa o sin liveness. Mantente quieto y acerca la camara."
+            elif denial_reason == "face_mismatch":
+                detail = "Rostro no coincide con el registro facial."
+            else:
+                detail = "Rostro no autorizado"
+            raise HTTPException(status_code=401, detail=detail)
 
-        tokens = token_service.issue_tokens(email)
+        tokens = self._token_service.issue_tokens(email)
         self._audit.registrar_evento(
             usuario_id=email,
             accion="LOGIN_FACEID_GRANTED",
@@ -550,31 +582,50 @@ class AuthService:
             metadatos={
                 "confidence": result.confianza_lbph,
                 "facesDetected": result.rostros_detectados,
+                "similarityBest": result.similitud_maxima,
+                "similarityTopK": result.similitud_topk,
+                "similarityMatches": result.coincidencias,
+                "similarityThreshold": result.umbral_similitud,
             },
         )
         return {
             "message": "Acceso verificado por FaceID",
             "user": {"email": email},
             "confidence": result.confianza_lbph,
+            "similarityBest": result.similitud_maxima,
+            "similarityTopK": result.similitud_topk,
             **tokens,
         }
 
     # ======== Tokens ========
     def refresh_token(self, payload: RefreshTokenRequest):
         try:
-            tokens = token_service.refresh(payload.refreshToken)
+            tokens = self._token_service.refresh(payload.refreshToken)
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         return {"message": "Token renovado", **tokens}
 
     def logout(self, payload: LogoutRequest):
-        token_service.revoke_refresh(payload.refreshToken)
+        self._token_service.revoke_refresh(payload.refreshToken)
         return {"message": "Sesion revocada"}
 
 
 class AuthController:
     def __init__(self, auth_service: AuthService):
         self._auth_service = auth_service
+        self.router = APIRouter(prefix="/auth", tags=["auth"])
+        self._register_routes()
+
+    def _register_routes(self) -> None:
+        self.router.add_api_route("/login/request-otp", self.request_login_otp, methods=["POST"])
+        self.router.add_api_route("/login/verify-otp", self.verify_login_otp, methods=["POST"])
+        self.router.add_api_route("/crypto/challenge", self.request_crypto_challenge, methods=["POST"])
+        self.router.add_api_route("/crypto/verify", self.verify_crypto_signature, methods=["POST"])
+        self.router.add_api_route("/crypto/challenge-status", self.crypto_challenge_status_endpoint, methods=["GET"])
+        self.router.add_api_route("/crypto/exchange", self.exchange_crypto_login, methods=["POST"])
+        self.router.add_api_route("/faceid/login", self.login_faceid, methods=["POST"])
+        self.router.add_api_route("/token/refresh", self.refresh_token, methods=["POST"])
+        self.router.add_api_route("/logout", self.logout, methods=["POST"])
 
     def request_login_otp(self, payload: LoginRequest):
         return self._auth_service.request_login_otp(payload)
@@ -591,6 +642,9 @@ class AuthController:
     def crypto_challenge_status(self, challenge_id: str):
         return self._auth_service.crypto_challenge_status(challenge_id)
 
+    def crypto_challenge_status_endpoint(self, challengeId: str = Query(...)):
+        return self._auth_service.crypto_challenge_status(challengeId)
+
     def exchange_crypto_login(self, payload: CryptoExchangeRequest):
         return self._auth_service.exchange_crypto_login(payload)
 
@@ -602,21 +656,3 @@ class AuthController:
 
     def logout(self, payload: LogoutRequest):
         return self._auth_service.logout(payload)
-
-
-auth_service = AuthService()
-auth_controller = AuthController(auth_service)
-
-
-def crypto_challenge_status_endpoint(challengeId: str = Query(...)) -> dict:
-    return auth_controller.crypto_challenge_status(challengeId)
-
-router.add_api_route("/login/request-otp", auth_controller.request_login_otp, methods=["POST"])
-router.add_api_route("/login/verify-otp", auth_controller.verify_login_otp, methods=["POST"])
-router.add_api_route("/crypto/challenge", auth_controller.request_crypto_challenge, methods=["POST"])
-router.add_api_route("/crypto/verify", auth_controller.verify_crypto_signature, methods=["POST"])
-router.add_api_route("/crypto/challenge-status", crypto_challenge_status_endpoint, methods=["GET"])
-router.add_api_route("/crypto/exchange", auth_controller.exchange_crypto_login, methods=["POST"])
-router.add_api_route("/faceid/login", auth_controller.login_faceid, methods=["POST"])
-router.add_api_route("/token/refresh", auth_controller.refresh_token, methods=["POST"])
-router.add_api_route("/logout", auth_controller.logout, methods=["POST"])

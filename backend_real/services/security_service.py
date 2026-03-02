@@ -490,8 +490,11 @@ class TotpService:
         return False
 
 
-security_store = SecurityDataStore()
-otp_service = OTPService(security_store)
-rate_limiter = RateLimiter(security_store)
-token_service = TokenService(security_store)
-totp_service = TotpService()
+class SecurityServices:
+    def __init__(self, *, store: SecurityDataStore | None = None, totp_issuer: str = "CryptoLock") -> None:
+        self.store = store or SecurityDataStore()
+        self.password_hasher = PasswordHasher()
+        self.otp_service = OTPService(self.store)
+        self.rate_limiter = RateLimiter(self.store)
+        self.token_service = TokenService(self.store)
+        self.totp_service = TotpService(issuer=totp_issuer)

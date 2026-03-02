@@ -198,15 +198,3 @@ class EmailService:
             raise EmailDeliveryError(
                 f"No se pudo conectar al servidor SMTP: {exc}"
             ) from exc
-
-
-def _first_present_env(*keys: str) -> str:
-    return EnvironmentReader._first_present_env(*keys)
-
-
-def _smtp_settings() -> SMTPConfig:
-    return SMTPConfigFactory.create()
-
-
-def send_otp_email(to_email: str, otp: str) -> None:
-    EmailService().send_otp_email(to_email=to_email, otp=otp)
